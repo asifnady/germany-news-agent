@@ -1,0 +1,40 @@
+{
+  "_comment": "Germany News Agent — edit this file to customize for your region",
+
+  "feeds": {
+    "SZ FFB": "https://rss.sueddeutsche.de/fuerstenfeldbruck",
+    "SZ Munchen": "https://rss.sueddeutsche.de/rss/Muenchen",
+    "SZ Bayern": "https://rss.sueddeutsche.de/rss/Bayern",
+    "Bild Munchen": "http://www.bild.de/rss-feeds/rss-16725492,feed=muenchen.bild.html",
+    "FAZ": "https://www.faz.net/rss/aktuell",
+    "Merkur FFB": "https://www.merkur.de/lokales/fuerstenfeldbruck/rssfeed.rdf",
+    "Presseportal": "https://www.presseportal.de/blaulicht/rss"
+  },
+
+  "keywords": {
+    "tier1": [
+      "fuerstenfeldbruck", "furstenfeldbruck", "ffb", "germering",
+      "puchheim", "olching", "groebenzell", "grobenzell", "maisach",
+      "freiheim", "pasing", "neuaubing", "bruck",
+      "moorenweis", "landsberied", "adelshofen", "alling",
+      "mittelstetten", "emmering", "eichenau", "kottgeisering",
+      "schoengeising", "turkenfeld", "jesenwang", "mammendorf", "hattenhofen"
+    ],
+    "tier2": [
+      "muenchen", "munchen", "munich",
+      "dachau", "starnberg", "freising", "erding", "ebersberg",
+      "wolfratshausen", "garmisch", "weilheim", "schongau", "holzkirchen", "miesbach"
+    ],
+    "tier3": ["bayern", "bavaria", "bayerisch"]
+  },
+
+  "feed_boost": ["SZ FFB", "Merkur FFB"],
+
+  "compact_counts": {
+    "local": 5,
+    "bavaria": 5,
+    "germany": 5
+  },
+
+  "detailed_per_source": 5
+}
