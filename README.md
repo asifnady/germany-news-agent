@@ -112,24 +112,34 @@ germany-news-agent/
 
 ## Discord / OpenClaw Integration
 
+### Option A: Use the setup wizard (easiest)
+```bash
+python setup.py
+```
+It prompts for your workspace path, Discord channel, and schedule — then outputs everything including:
+- TOOLS.md trigger commands (copied to your OpenClaw workspace)
+- Cron job JSON (ready to paste)
+
+### Option B: Manual setup
+
 1. Place the script folder on your machine
-2. Set up an OpenClaw cron job for scheduled news:
+2. Add trigger handlers to your agent configuration:
+   - `germany news` → compact mode
+   - `full news` → detailed mode
+   - `@Tipu <number>` → scrape + summarize that article
+3. Set up an OpenClaw cron job for scheduled news:
 ```json
 {
-  "name": "germany-news-monday",
+  "name": "germany-news-weekly",
   "schedule": { "kind": "cron", "expr": "30 9 * * 1", "tz": "Europe/Berlin" },
   "sessionTarget": "isolated",
   "payload": {
     "kind": "agentTurn",
-    "message": "cd C:\\path\\to\\germany-news-agent && python germany_news.py"
+    "message": "cd /path/to/germany-news-agent && python germany_news.py"
   },
   "delivery": { "mode": "announce", "channel": "discord", "to": "channel:YOUR_CHANNEL_ID" }
 }
 ```
-3. Configure trigger handlers:
-   - `germany news` → compact mode
-   - `full news` → detailed mode  
-   - `@Tipu <number>` → scrape + summarize that article
 
 ## Architecture
 

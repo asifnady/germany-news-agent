@@ -144,12 +144,13 @@ germany-news-agent/
 ├── config.json              # Feeds, keywords, tier config
 ├── germany_news.py          # Main script (fetch, filter, translate, output + mapping)
 ├── summarize.py             # On-demand: trafilatura scrape + translate + DistilBART
+├── setup.py                 # Interactive setup wizard for new users
 ├── last_news_articles.json  # Runtime: flat numbered article map (auto-generated)
 ├── phase1_fetch.py          # Phase test: fetch RSS feeds only
 ├── phase2_filter.py         # Phase test: filter + rank articles
 ├── phase3_translate_test.py # Phase test: argos-translate setup
 ├── requirements.txt         # Python dependencies
-├── README.md                # Usage docs
+├── README.md                # Usage docs + setup wizard instructions
 ├── DESIGN.md                # This file
 ├── .gitignore
 ```
@@ -167,6 +168,8 @@ trafilatura                # Article text extraction
 transformers               # DistilBART model
 torch                      # PyTorch (CPU)
 ```
+
+*(No additional deps for setup.py — it uses only stdlib.)*
 
 | Resource | Size | When |
 |----------|------|------|
