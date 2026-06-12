@@ -2,3 +2,6 @@ argostranslate==1.11.0
 ctranslate2==4.8.0
 sentencepiece==0.2.1
 sacremoses==0.1.1
+trafilatura>=1.12.0
+transformers>=4.44.0
+torch>=2.4.0
