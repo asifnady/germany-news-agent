@@ -2,3 +2,4 @@ __pycache__/
 *.pyc
 .env
 last_news_articles.json
+translation_*.txt

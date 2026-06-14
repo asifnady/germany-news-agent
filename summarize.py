@@ -149,8 +149,8 @@ def main():
     parser = argparse.ArgumentParser(description="Scrape, translate, and summarize a German news article.")
     parser.add_argument("url", help="Article URL to scrape and summarize")
     parser.add_argument("level", nargs="?", default="detailed",
-                        choices=["short", "detailed", "bullet"],
-                        help="Summary detail level (default: detailed)")
+                        choices=["short", "detailed", "bullet", "translate"],
+                        help="Summary detail level, or 'translate' for the full English translation (default: detailed)")
     args = parser.parse_args()
     
     print(f"Article summarization started...", file=sys.stderr)
@@ -172,14 +172,28 @@ def main():
         en_text = raw_text
     print(f"  Translated to {len(en_text)} characters of English.", file=sys.stderr)
     
-    # Step 3: Summarize
-    print(f"  Step 3/3: Summarizing with BART ({args.level})...", file=sys.stderr)
-    summary = summarize(en_text, args.level)
-    
-    # Output
-    print(f"\n{'─'*60}")
-    print(summary)
-    print(f"{'─'*60}")
+    # Step 3: Summarize or output full translation
+    if args.level == "translate":
+        # Save full English translation to a text file
+        import tempfile, datetime
+        ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"translation_{ts}.txt")
+        with open(out_path, "w", encoding="utf-8") as f:
+            f.write(en_text)
+        print(f"\n{'─'*60}", file=sys.stderr)
+        print(f"  Full translation saved to: {out_path}", file=sys.stderr)
+        print(f"  Size: {len(en_text)} characters", file=sys.stderr)
+        print(f"{'─'*60}", file=sys.stderr)
+        # Print the file path on stdout so the agent can pick it up
+        print(out_path)
+    else:
+        print(f"  Step 3/3: Summarizing with BART ({args.level})...", file=sys.stderr)
+        summary = summarize(en_text, args.level)
+        
+        # Output
+        print(f"\n{'─'*60}")
+        print(summary)
+        print(f"{'─'*60}")
 
 if __name__ == "__main__":
     main()
