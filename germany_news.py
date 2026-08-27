@@ -2,9 +2,17 @@
 Germany News Agent: Fetch, filter, translate, and format top news.
 Reads config.json for all settings — edit that file, not this one.
 """
-import json, os, re, ssl, sys, urllib.request, xml.etree.ElementTree as ET
+import json, os, re, ssl, sys, time, urllib.request, urllib.parse, xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
-import argostranslate.package, argostranslate.translate
+# Argos (local NMT) is preferred, but its native DLLs (sentencepiece, ctranslate2)
+# can be blocked by Windows Smart App Control. Guard the import so the script
+# still runs and falls back to online translation.
+try:
+    import argostranslate.package, argostranslate.translate
+    _ARGOS_OK = True
+except Exception as _e:
+    _ARGOS_OK = False
+    print(f"  [translator] Argos unavailable ({_e}); using online fallback.", file=sys.stderr)
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -34,6 +42,9 @@ def setup_translator():
     global _translator_ready
     if _translator_ready:
         return
+    if not _ARGOS_OK:
+        _translator_ready = True  # online fallback mode
+        return
     # Check if de→en translation works (model already on disk)
     try:
         test = argostranslate.translate.translate("Hallo", "de", "en")
@@ -50,14 +61,51 @@ def setup_translator():
             _translator_ready = True
             return
 
+_translate_cache = {}
+def _online_translate(text):
+    """Translate via free online APIs; returns translated text or None."""
+    q = urllib.parse.quote(text)
+    # 1) Google gtx (no key)
+    try:
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=de&tl=en&dt=t&q={q}"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        out = "".join(seg[0] for seg in data[0] if seg and seg[0])
+        if out:
+            return out
+    except Exception as e:
+        print(f"  [translate error] Google: {e}", file=sys.stderr)
+    # 2) MyMemory (free, no key)
+    try:
+        url = f"https://api.mymemory.translated.net/get?q={q}&langpair=de|en"
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, context=ctx, timeout=15) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        out = (data.get("responseData") or {}).get("translatedText")
+        if out and not out.startswith("MYMEMORY WARNING"):
+            return out
+    except Exception as e:
+        print(f"  [translate error] MyMemory: {e}", file=sys.stderr)
+    return None
+
 def translate(text):
     if not text or not text.strip():
         return ""
-    try:
-        return argostranslate.translate.translate(text, "de", "en")
-    except Exception as e:
-        print(f"  [translate error] {e}", file=sys.stderr)
+    if _ARGOS_OK:
+        try:
+            return argostranslate.translate.translate(text, "de", "en")
+        except Exception as e:
+            print(f"  [translate error] {e}", file=sys.stderr)
+    key = text.strip()
+    if key in _translate_cache:
+        return _translate_cache[key]
+    out = _online_translate(text)
+    if out is None:
         return text
+    _translate_cache[key] = out
+    time.sleep(0.25)  # be polite to the free endpoints
+    return out
 
 # --- Feed helpers ---
 def strip_html(t):
