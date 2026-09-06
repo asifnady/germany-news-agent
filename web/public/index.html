@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0e1116">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Germany News</title>
+<style>
+  :root{
+    --bg:#0e1116; --card:#161b23; --card2:#1b212c; --line:#262e3b;
+    --text:#e6e9ee; --muted:#8b95a5; --accent:#4da3ff;
+    --local:#4ade80; --bavaria:#fbbf24; --germany:#60a5fa;
+    --err:#f87171; --warn:#fbbf24;
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent}
+  html,body{margin:0;padding:0}
+  body{
+    background:var(--bg); color:var(--text);
+    font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    line-height:1.5; font-size:16px;
+  }
+  .wrap{max-width:760px;margin:0 auto;padding:14px 14px 40px}
+  header{position:sticky;top:0;background:rgba(14,17,22,.92);backdrop-filter:blur(6px);
+    z-index:5;padding-bottom:8px;border-bottom:1px solid var(--line);margin:0 -14px 12px;padding-left:14px;padding-right:14px}
+  .top{display:flex;align-items:center;justify-content:space-between}
+  h1{font-size:20px;margin:8px 0 4px;font-weight:700}
+  .src{font-size:11px;font-weight:600;color:var(--accent);background:#1b2a3f;
+    border:1px solid #2b4566;border-radius:99px;padding:2px 8px;vertical-align:2px;margin-left:6px;letter-spacing:.4px}
+  .nav{display:flex;align-items:center;gap:8px;margin:6px 0 8px}
+  .dates{flex:1;min-width:0;text-align:center}
+  .dates .d{font-weight:700;font-size:16px}
+  .dates .g{font-size:11.5px;color:var(--muted)}
+  button{background:var(--card2);color:var(--text);border:1px solid var(--line);
+    border-radius:10px;font-size:15px;padding:7px 12px;cursor:pointer}
+  button:active{transform:scale(.97)}
+  button.primary{background:#2563eb;border-color:#3b82f6;font-weight:600}
+  button:disabled{opacity:.55;cursor:default;transform:none}
+  #latest{font-size:13px;color:var(--muted)}
+  .chips{display:flex;gap:6px;overflow-x:auto;padding:2px 0 4px;scrollbar-width:none}
+  .chips::-webkit-scrollbar{display:none}
+  .chips button{flex:0 0 auto;font-size:12.5px;padding:4px 10px;border-radius:99px;color:var(--muted)}
+  .chips button.on{background:#2563eb;border-color:#3b82f6;color:#fff;font-weight:600}
+  .banner{margin:10px 0;padding:10px 12px;border-radius:10px;background:#3a1d1d;
+    border:1px solid #6b2b2b;color:var(--err);font-size:14px}
+  .loading{text-align:center;color:var(--muted);padding:60px 0}
+  section{margin:18px 0}
+  h2{font-size:13px;letter-spacing:1.2px;text-transform:uppercase;color:var(--muted);
+    margin:0 0 8px;display:flex;align-items:center;gap:8px}
+  h2 .dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto}
+  .local .dot{background:var(--local)} .bavaria .dot{background:var(--bavaria)} .germany .dot{background:var(--germany)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;margin-bottom:8px;overflow:hidden}
+  .card.open{border-color:#33415c}
+  .head{display:flex;gap:10px;width:100%;text-align:left;background:none;border:none;
+    padding:12px 12px;cursor:pointer;border-radius:12px}
+  .head .chev{color:var(--muted);flex:0 0 auto;transition:transform .15s;font-size:13px;margin-top:3px}
+  .card.open .chev{transform:rotate(90deg)}
+  .ttl{font-size:15.5px;font-weight:600;line-height:1.4}
+  .meta{display:flex;align-items:center;gap:8px;margin-top:6px;flex-wrap:wrap}
+  .badge{font-size:11px;font-weight:700;letter-spacing:.4px;color:var(--accent);
+    background:#14243a;border:1px solid #24405f;border-radius:6px;padding:1px 6px}
+  .time{font-size:11.5px;color:var(--muted)}
+  .body{display:none;padding:0 12px 12px;border-top:1px dashed var(--line)}
+  .card.open .body{display:block}
+  .body-in{padding-top:10px}
+  .summary{font-size:14.5px;color:#cdd4de}
+  .orig{font-size:12.5px;color:var(--muted);margin-top:8px;font-style:italic}
+  .acts{display:flex;align-items:center;gap:8px;margin-top:12px;flex-wrap:wrap}
+  .acts .state{font-size:13px;color:var(--muted)}
+  .acts .state.run{color:var(--warn)}
+  .acts .state.err{color:var(--err)}
+  .prog{font-size:12px;color:var(--muted);margin-top:6px;font-family:ui-monospace,Consolas,monospace;word-break:break-word}
+  .full{display:none;margin-top:12px;border:1px solid var(--line);border-radius:10px;
+    background:var(--card2);padding:12px;max-height:70vh;overflow-y:auto;white-space:pre-wrap;
+    font-size:14.5px;line-height:1.65}
+  .full.show{display:block}
+  .spin{display:inline-block;width:13px;height:13px;border:2px solid var(--line);
+    border-top-color:var(--accent);border-radius:50%;animation:sp .8s linear infinite;vertical-align:-2px;margin-right:6px}
+  @keyframes sp{to{transform:rotate(360deg)}}
+  a{color:var(--accent)}
+  footer{color:var(--muted);font-size:12px;text-align:center;margin-top:30px}
+  .none{text-align:center;color:var(--muted);padding:40px 0}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="top">
+      <h1>Germany News<span class="src">DE→EN</span></h1>
+      <button id="refresh" title="Refresh">⟳</button>
+    </div>
+    <div class="nav">
+      <button id="prev" title="Previous day">‹</button>
+      <div class="dates">
+        <div class="d" id="dateLabel">…</div>
+        <div class="g" id="genAt"></div>
+      </div>
+      <button id="next" title="Next day">›</button>
+      <button id="latest">Latest</button>
+    </div>
+    <div class="chips" id="chips"></div>
+  </header>
+
+  <div id="banner" class="banner" style="display:none"></div>
+  <div id="content"></div>
+  <footer id="foot">Internal news reader · Germany News Agent</footer>
+</div>
+
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+let state = { days: [], date: null, data: null, activeJobs: new Set() };
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, (c) =>
+    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+
+async function api(url, opts) {
+  const r = await fetch(url, opts);
+  if (!r.ok) {
+    let msg = "HTTP " + r.status;
+    try { msg = (await r.json()).error || msg; } catch {}
+    throw new Error(msg);
+  }
+  return r.json();
+}
+
+function banner(msg) {
+  const b = $("banner");
+  if (msg) { b.textContent = msg; b.style.display = "block"; }
+  else b.style.display = "none";
+}
+
+function fmtTime(pub) {
+  if (!pub) return "";
+  const d = new Date(pub);
+  if (isNaN(d)) return "";
+  return d.toLocaleDateString("en-GB", { weekday: "short", day: "numeric", month: "short" }) +
+    " " + d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+}
+
+function fmtDateLabel(date) {
+  const d = new Date(date + "T12:00:00");
+  const today = new Date(); today.setHours(0,0,0,0);
+  const y = new Date(today); y.setDate(y.getDate() - 1);
+  const t = date === today.toISOString().slice(0,10) ? "Today" :
+            date === y.toISOString().slice(0,10) ? "Yesterday" : null;
+  return (t ? t + " · " : "") + d.toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+}
+
+// --- init / date navigation ------------------------------------------
+async function init() {
+  $("refresh").onclick = () => loadDate(state.date, true);
+  $("prev").onclick = () => step(-1);
+  $("next").onclick = () => step(1);
+  $("latest").onclick = () => { if (state.days.length) selectDate(state.days[0]); };
+  try {
+    const d = await api("/api/days");
+    state.days = d.days || [];
+    renderChips();
+    if (!state.days.length) {
+      $("content").innerHTML = '<div class="none">No news built yet.<br>Run <b>web_build.py</b> or wait for the 07:00 daily job.</div>';
+      $("dateLabel").textContent = "—";
+      return;
+    }
+    selectDate(state.days[0], true);
+  } catch (e) { banner("Cannot reach server: " + esc(e.message)); }
+}
+
+function step(dir) {
+  const i = state.days.indexOf(state.date);
+  const j = i + dir;
+  if (j >= 0 && j < state.days.length) selectDate(state.days[j]);
+}
+
+function renderChips() {
+  const el = $("chips");
+  el.innerHTML = "";
+  for (const d of state.days.slice(0, 14)) {
+    const b = document.createElement("button");
+    b.textContent = d.slice(5).replace("-", "/"); // MM/DD short
+    b.onclick = () => selectDate(d);
+    if (d === state.date) b.classList.add("on");
+    el.appendChild(b);
+  }
+}
+
+async function selectDate(date, force) {
+  if (!force && date === state.date && state.data) return;
+  state.date = date;
+  renderChips();
+  await loadDate(date);
+}
+
+async function loadDate(date, silent) {
+  if (!silent) $("content").innerHTML = '<div class="loading">Loading…</div>';
+  try {
+    const day = await api("/api/news?date=" + encodeURIComponent(date));
+    state.data = day;
+    state.activeJobs = new Set();
+    render(day);
+  } catch (e) {
+    banner("Failed to load " + date + ": " + esc(e.message));
+    $("content").innerHTML = '<div class="none">No data for that day.</div>';
+  }
+}
+
+// --- render -----------------------------------------------------------
+function render(day) {
+  banner(null);
+  $("dateLabel").textContent = fmtDateLabel(day.date);
+  $("genAt").textContent = "built " + (day.generatedAt ? new Date(day.generatedAt).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" }) : "?");
+  const c = $("content");
+  c.innerHTML = "";
+  if (!day.sections || !day.sections.length) {
+    c.innerHTML = '<div class="none">No articles for this day.</div>';
+    return;
+  }
+  for (const sec of day.sections) {
+    const key = /^LOCAL/.test(sec.name) ? "local" : /^BAVARIA/.test(sec.name) ? "bavaria" : "germany";
+    const s = document.createElement("section");
+    s.className = key;
+    const h = document.createElement("h2");
+    h.innerHTML = '<span class="dot"></span>' + esc(sec.name);
+    s.appendChild(h);
+    for (const a of sec.articles || []) s.appendChild(card(a));
+    c.appendChild(s);
+  }
+  // resume polling for any still-running jobs
+  for (const a of allArticles()) {
+    if (a.tr && (a.tr.status === "queued" || a.tr.status === "running")) pollTr(a.id, a.tr.status);
+  }
+}
+
+function allArticles() {
+  const out = [];
+  for (const sec of state.data.sections || []) for (const a of sec.articles || []) out.push(a);
+  return out;
+}
+
+function card(a) {
+  const art = document.createElement("article");
+  art.className = "card";
+  art.dataset.id = a.id;
+
+  const head = document.createElement("button");
+  head.className = "head";
+  head.innerHTML =
+    '<span class="chev">▶</span>' +
+    '<div style="flex:1;min-width:0">' +
+      '<div class="ttl">' + esc(a.title || a.title_de) + '</div>' +
+      '<div class="meta">' +
+        '<span class="badge">' + esc(a.source) + '</span>' +
+        (a.published ? '<span class="time">' + esc(fmtTime(a.published)) + '</span>' : "") +
+        (a.tr && a.tr.status === "done" ? '<span class="time" style="color:#4ade80">✓ translated</span>' : "") +
+        (a.tr && (a.tr.status === "queued" || a.tr.status === "running") ? '<span class="time" style="color:#fbbf24">⋯ translating</span>' : "") +
+      '</div>' +
+    '</div>';
+  head.onclick = () => { art.classList.toggle("open"); onOpen(art, a); };
+  art.appendChild(head);
+
+  const body = document.createElement("div");
+  body.className = "body";
+  body.innerHTML = '<div class="body-in"></div>';
+  art.appendChild(body);
+  art._inner = body.querySelector(".body-in");
+  art._article = a;
+  return art;
+}
+
+function onOpen(art, a) {
+  const box = art._inner;
+  if (art._rendered) { maybeShowText(art); return; }
+  art._rendered = true;
+  const html = [];
+  if (a.summary) html.push('<div class="summary">' + esc(a.summary) + '</div>');
+  else if (a.title_de && a.title_de !== a.title) html.push('<div class="orig">(DE: ' + esc(a.title_de) + ')</div>');
+  if (a.summary_de) html.push('<div class="orig">DE original lead: ' + esc(a.summary_de.slice(0, 180)) + (a.summary_de.length > 180 ? "…" : "") + '</div>');
+  html.push('<div class="acts"></div>');
+  box.innerHTML = html.join("");
+  const acts = box.querySelector(".acts");
+  const stateEl = document.createElement("span");
+  stateEl.className = "state";
+  acts.appendChild(stateEl);
+
+  const btn = document.createElement("button");
+  btn.className = "primary";
+  btn.style.display = "none";
+  acts.appendChild(btn);
+
+  const orig = document.createElement("a");
+  orig.href = a.url; orig.target = "_blank"; orig.rel = "noopener";
+  orig.textContent = "Original ↗";
+  orig.style.fontSize = "13.5px";
+  orig.style.marginLeft = "auto";
+  acts.appendChild(orig);
+
+  const prog = document.createElement("div");
+  prog.className = "prog";
+  prog.style.display = "none";
+  box.appendChild(prog);
+
+  const full = document.createElement("div");
+  full.className = "full";
+  box.appendChild(full);
+
+  art._ui = { btn, stateEl, prog, full, autoOpen: false };
+  paintTr(art, (a.tr && a.tr.status) || "none", a.tr || {});
+
+  btn.onclick = async () => {
+    const st = art._trStatus;
+    if (st === "done") { toggleText(art); return; }
+    if (st === "queued" || st === "running") return;
+    art._ui.autoOpen = true;
+    try {
+      const j = await api("/api/translate", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ date: state.date, id: a.id })
+      });
+      paintTr(art, j.status, {});
+      if (j.status !== "done") await pollTr(a.id, j.status);
+    } catch (e) { paintTr(art, "error", { error: e.message }); }
+  };
+  maybeShowText(art);
+}
+
+function paintTr(art, status, info) {
+  art._trStatus = status;
+  const { btn, stateEl, prog } = art._ui;
+  info = info || {};
+  if (status === "none") {
+    btn.style.display = ""; btn.textContent = "Full EN translation";
+    btn.disabled = false;
+    stateEl.textContent = ""; prog.style.display = "none";
+  } else if (status === "queued" || status === "running") {
+    btn.style.display = ""; btn.disabled = true;
+    btn.textContent = status === "queued" ? "Queued…" : "Translating…";
+    stateEl.className = "state run";
+    stateEl.innerHTML = '<span class="spin"></span>' + (status === "queued" ? "Waiting in queue" : "Working");
+    stateEl.style.display = "";
+    prog.style.display = "block";
+    prog.textContent = info.progress || "";
+    art._timer = (art._timer || 0) + 1;
+  } else if (status === "done") {
+    btn.style.display = ""; btn.disabled = false;
+    btn.textContent = (art._textShown) ? "Hide translation" : "Show full EN translation";
+    stateEl.textContent = ""; prog.style.display = "none";
+    if (art._ui.autoOpen) { art._ui.autoOpen = false; fetchText(art); }
+    else maybeShowText(art);
+  } else {
+    btn.style.display = ""; btn.disabled = false; btn.textContent = "Retry";
+    stateEl.className = "state err";
+    stateEl.textContent = "Translation failed";
+    prog.style.display = "block";
+    prog.textContent = info.error || "unknown error";
+  }
+}
+
+async function pollTr(id, status) {
+  const key = state.date + "_" + id;
+  if (state.activeJobs.has(key)) return;
+  state.activeJobs.add(key);
+  try {
+    for (;;) {
+      const j = await api("/api/translate?date=" + encodeURIComponent(state.date) + "&id=" + id);
+      const art = cardEl(id);
+      if (art) paintTr(art, j.status, j);
+      if (j.status === "done") { if (art) fetchText(art); break; }
+      if (j.status === "error") break;
+      await sleep(2500);
+    }
+  } catch (e) {
+    const art = cardEl(id);
+    if (art) paintTr(art, "error", { error: e.message });
+  } finally {
+    state.activeJobs.delete(key);
+  }
+}
+
+function cardEl(id) {
+  const art = document.querySelector('.card[data-id="' + id + '"]');
+  return art && art._rendered ? art : null;
+}
+
+function toggleText(art) {
+  const { btn, full } = art._ui;
+  if (full.classList.contains("show")) {
+    full.classList.remove("show");
+    btn.textContent = "Show full EN translation";
+    art._textShown = false;
+  } else fetchText(art);
+}
+
+async function fetchText(art) {
+  const a = art._article;
+  if (art._textCache) { showText(art, art._textCache); return; }
+  const { stateEl, prog } = art._ui;
+  stateEl.className = "state run";
+  stateEl.innerHTML = '<span class="spin"></span>Loading text…';
+  try {
+    const j = await api("/api/translate?date=" + encodeURIComponent(state.date) + "&id=" + a.id);
+    if (j.status === "done") { art._textCache = j.text || ""; showText(art, art._textCache); }
+  } catch (e) {
+    stateEl.className = "state err"; stateEl.textContent = "Load failed";
+    prog.style.display = "block"; prog.textContent = e.message;
+  }
+}
+
+function showText(art, text) {
+  const { btn, full, stateEl, prog } = art._ui;
+  full.textContent = text || "(empty translation)";
+  full.classList.add("show");
+  btn.textContent = "Hide translation";
+  art._textShown = true;
+  stateEl.textContent = ""; prog.style.display = "none";
+  full.scrollTop = 0;
+}
+
+function maybeShowText(art) {
+  if (art._trStatus !== "done" || !art._ui.autoOpen) return;
+  art._ui.autoOpen = false;
+  fetchText(art);
+}
+
+init();
+</script>
+</body>
+</html>

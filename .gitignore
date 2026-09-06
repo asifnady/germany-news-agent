@@ -3,3 +3,6 @@ __pycache__/
 .env
 last_news_articles.json
 translation_*.txt
+web/data/
+web/*.log
+.venv/
