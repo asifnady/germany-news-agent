@@ -1,199 +1,289 @@
 """
-Germany News Agent — On-demand article scraping + BART summarization.
+Germany News Agent — On-demand article scraping + summarization.
 
 Usage:
-    python summarize.py <url> [short|detailed|bullet]
+    python summarize.py <url> [short|detailed|bullet|translate]
 
-Pipeline:
-    1. trafilatura — scrape full article text from URL
-    2. argos-translate — German → English translation (offline)
-    3. facebook/bart-base-cnn — English summarization (offline)
+Pipeline (stdlib only — no trafilatura/lxml/torch/BART, which Windows Smart
+App Control blocks on this machine since 2026-08):
+    1. urllib + html.parser — scrape article text from URL
+    2. online translation  — German → English (Google gtx → MyMemory fallback)
+    3. extractive summary  — lead + word-frequency sentence scoring
 
-First run will download the Hugging Face model (~600 MB).
+Rebuilt 2026-08-31: old pipeline (trafilatura scrape, Argos offline NMT,
+DistilBART) is dead because SAC blocks lxml.etree and torch shm.dll.
 """
-import argparse, sys, os, warnings
-warnings.filterwarnings("ignore")
+import argparse, sys, os, re, json, ssl, time, html as html_lib
+import urllib.request, urllib.parse
+from html.parser import HTMLParser
+from collections import Counter
 
-# --- Translation (reuse argos-translate logic from germany_news.py) ---
-import argostranslate.package, argostranslate.translate
+try:
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+except Exception:
+    pass
 
-_translator_ready = False
-def setup_translator():
-    global _translator_ready
-    if _translator_ready:
-        return
-    # Check if de→en translation works (model already on disk)
+_ssl_ctx = ssl.create_default_context()
+UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+      "(KHTML, like Gecko) Chrome/126.0 Safari/537.36")
+
+
+# --- Scraping (stdlib) ---
+
+class _TextExtractor(HTMLParser):
+    """Collect <p> paragraph text; skip nav/script/style/figure noise."""
+    SKIP = {"script", "style", "noscript", "nav", "footer", "aside", "form",
+            "svg", "figure", "figcaption", "header", "iframe", "button"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.paras = []
+        self._cur = []
+        self._skip_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.SKIP:
+            self._skip_depth += 1
+        elif tag == "p":
+            self._cur = []
+
+    def handle_endtag(self, tag):
+        if tag in self.SKIP and self._skip_depth:
+            self._skip_depth -= 1
+        elif tag == "p":
+            txt = " ".join("".join(self._cur).split())
+            if txt:
+                self.paras.append(txt)
+            self._cur = []
+
+    def handle_data(self, data):
+        if not self._skip_depth:
+            self._cur.append(data)
+
+
+def _fetch(url):
+    req = urllib.request.Request(url, headers={
+        "User-Agent": UA,
+        "Accept-Language": "de-DE,de;q=0.9,en;q=0.8",
+    })
+    with urllib.request.urlopen(req, context=_ssl_ctx, timeout=25) as resp:
+        raw = resp.read()
+    return raw.decode("utf-8", errors="replace")
+
+
+def scrape_article(url):
+    """Fetch and extract article text; returns (title, body) or (None, None)."""
+    print(f"  [scrape] Fetching: {url}", file=sys.stderr)
     try:
-        test = argostranslate.translate.translate("Hallo", "de", "en")
-        _translator_ready = True
-        return
-    except Exception:
-        pass
-    # Need to download and install
-    print("  [setup] Downloading German→English translation model...", file=sys.stderr)
-    argostranslate.package.update_package_index()
-    for pkg in argostranslate.package.get_available_packages():
-        if pkg.from_code == "de" and pkg.to_code == "en":
-            download_path = pkg.download()
-            argostranslate.package.install_from_path(download_path)
-            _translator_ready = True
-            return
+        page = _fetch(url)
+    except Exception as e:
+        print(f"  [scrape error] {e}", file=sys.stderr)
+        return None, None
+
+    m = re.search(r"<title[^>]*>(.*?)</title>", page, re.S | re.I)
+    title = html_lib.unescape(m.group(1)).strip() if m else ""
+
+    parser = _TextExtractor()
+    try:
+        parser.feed(page)
+    except Exception as e:
+        print(f"  [scrape parse error] {e}", file=sys.stderr)
+    paras = parser.paras
+
+    if len(paras) < 2:
+        # Fallback: strip tags and split into sizable blocks
+        text = re.sub(r"<script.*?</script>|<style.*?</style>", " ", page,
+                      flags=re.S | re.I)
+        text = re.sub(r"<[^>]+>", "\n", text)
+        blocks = [b.strip() for b in re.split(r"\n\s*\n", text)
+                  if len(b.strip()) > 80]
+        paras = blocks[:20]
+
+    body = "\n\n".join(paras)
+    return title, body
+
+
+# --- Translation (online fallback, same as germany_news.py) ---
+
+_translate_cache = {}
+
+
+def _online_translate(text):
+    """Translate via free online APIs; returns translated text or None."""
+    q = urllib.parse.quote(text)
+    # 1) Google gtx (no key)
+    try:
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=de&tl=en&dt=t&q={q}"
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        out = "".join(seg[0] for seg in data[0] if seg and seg[0])
+        if out:
+            return out
+    except Exception as e:
+        print(f"  [translate error] Google gtx: {e}", file=sys.stderr)
+    # 1b) Google dict-chrome-ex (different frontend, often not rate-limited)
+    try:
+        url = f"https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=de&tl=en&q={q}"
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        out = data[0] if isinstance(data, list) and data else None
+        if out:
+            return out
+    except Exception as e:
+        print(f"  [translate error] Google dict-chrome-ex: {e}", file=sys.stderr)
+    # 2) MyMemory (free, no key; ~500 char limit per request)
+    try:
+        url = f"https://api.mymemory.translated.net/get?q={q}&langpair=de|en"
+        req = urllib.request.Request(url, headers={"User-Agent": UA})
+        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=20) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        out = (data.get("responseData") or {}).get("translatedText")
+        if out and not out.startswith("MYMEMORY WARNING"):
+            return out
+    except Exception as e:
+        print(f"  [translate error] MyMemory: {e}", file=sys.stderr)
+    return None
+
+
+def _chunks(text, size=450):
+    """Split text into ~size-char chunks on paragraph/sentence boundaries
+    (MyMemory free tier caps at ~500 chars, so keep chunks small)."""
+    chunks = []
+    for para in re.split(r"\n\s*\n", text):
+        para = para.strip()
+        if not para:
+            continue
+        if len(para) <= size:
+            chunks.append(para)
+            continue
+        sents = re.split(r"(?<=[.!?])\s+(?=[A-ZÄÖÜ„\"])", para)
+        cur = ""
+        for s in sents:
+            if len(cur) + len(s) > size and cur:
+                chunks.append(cur)
+                cur = s
+            else:
+                cur = (cur + " " + s).strip()
+        if cur:
+            chunks.append(cur)
+    return chunks
+
 
 def translate(text):
     if not text or not text.strip():
         return ""
-    try:
-        return argostranslate.translate.translate(text, "de", "en")
-    except Exception as e:
-        print(f"  [translate error] {e}", file=sys.stderr)
-        return text
+    out_parts = []
+    for c in _chunks(text):
+        key = c.strip()
+        if key in _translate_cache:
+            out_parts.append(_translate_cache[key])
+            continue
+        t = _online_translate(c)
+        if t is None:
+            t = c  # keep the German chunk rather than lose content
+            print("  [translate] kept German chunk (online translation failed)",
+                  file=sys.stderr)
+        else:
+            _translate_cache[key] = t
+            time.sleep(0.25)  # be polite to the free endpoints
+        out_parts.append(t)
+    return "\n\n".join(out_parts)
 
 
-# --- Scraping via trafilatura ---
-def scrape_article(url):
-    """Fetch and extract article text from a URL using trafilatura."""
-    import trafilatura
-    print(f"  [scrape] Fetching: {url}", file=sys.stderr)
-    try:
-        downloaded = trafilatura.fetch_url(url)
-        if not downloaded:
-            return None
-        text = trafilatura.extract(downloaded, output_format="txt", favor_precision=True,
-                                    include_comments=False, include_tables=False,
-                                    include_images=False, include_formatting=False)
-        if text:
-            text = text.strip()
-        return text
-    except Exception as e:
-        print(f"  [scrape error] {e}", file=sys.stderr)
-        return None
+# --- Extractive summarization (replaces BART) ---
+
+_STOP = set("""der die das den dem des ein eine einen einem einer und oder aber
+als mit von zu bei fur für auf an aus um über unter nach vor zwischen im in
+ist sind war waren wird wurde werden hat haben hatte nicht doch ja nein nur
+auch noch schon sehr viel viele dass das die den""".split())
 
 
-# --- BART Summarization ---
-_bart_model = None
-_bart_tokenizer = None
+def _split_sentences(text):
+    text = re.sub(r"\s+", " ", text)
+    return [s.strip() for s in re.split(r"(?<=[.!?])\s+", text)
+            if len(s.strip()) > 15]
 
-def setup_bart():
-    global _bart_model, _bart_tokenizer
-    if _bart_model is not None:
-        return
-    from transformers import AutoTokenizer, AutoModelForSeq2SeqLM
-    model_name = "sshleifer/distilbart-cnn-6-6"
-    print(f"  [bart] Loading {model_name}...", file=sys.stderr)
-    _bart_tokenizer = AutoTokenizer.from_pretrained(model_name)
-    _bart_model = AutoModelForSeq2SeqLM.from_pretrained(model_name)
-    print(f"  [bart] Model loaded.", file=sys.stderr)
+
+def _word_freq(sents):
+    words = [w.lower() for s in sents
+             for w in re.findall(r"[A-Za-zÄÖÜäöüß]{4,}", s)
+             if w.lower() not in _STOP]
+    cnt = Counter(words)
+    mx = max(cnt.values()) if cnt else 1
+    return {w: c / mx for w, c in cnt.items()}
+
 
 def summarize(text, level="detailed"):
-    """Summarize English text using bart-base-cnn.
-    
-    Args:
-        text: English article text to summarize
-        level: "short", "detailed", or "bullet"
-    
-    Returns:
-        Summary string
-    """
-    global _bart_model, _bart_tokenizer
-    if not text or len(text.strip()) < 20:
+    """Extractive summary: lead sentences weighted by word-frequency score."""
+    sents = _split_sentences(text)
+    if not sents:
         return "Article text too short to summarize."
-    
-    setup_bart()
-    
-    # Set generation parameters based on level
-    if level == "short":
-        max_length = 60
-        min_length = 15
-    elif level == "bullet":
-        max_length = 180
-        min_length = 50
-    else:  # detailed (default)
-        max_length = 150
-        min_length = 40
-    
-    # Truncate input if too long (BART has 1024 token limit)
-    inputs = _bart_tokenizer(
-        text,
-        max_length=1024,
-        truncation=True,
-        return_tensors="pt"
-    )
-    
-    print(f"  [bart] Generating {level} summary...", file=sys.stderr)
-    summary_ids = _bart_model.generate(
-        inputs["input_ids"],
-        max_length=max_length,
-        min_length=min_length,
-        num_beams=4,
-        length_penalty=2.0,
-        early_stopping=True,
-        no_repeat_ngram_size=3,
-    )
-    
-    summary = _bart_tokenizer.decode(summary_ids[0], skip_special_tokens=True)
-    
-    # Post-process for bullet mode
+    n = {"short": 2, "detailed": 5, "bullet": 8}.get(level, 5)
+    freq = _word_freq(sents)
+    scored = []
+    for i, s in enumerate(sents):
+        lead = 1.0 - (i / max(len(sents), 1)) * 0.6  # earlier = stronger lead
+        fw = [freq.get(w.lower(), 0)
+              for w in re.findall(r"[A-Za-zÄÖÜäöüß]{4,}", s)
+              if w.lower() not in _STOP]
+        fs = (sum(fw) / len(fw)) if fw else 0.0
+        scored.append((lead * 0.65 + fs * 0.35, i, s))
+    scored.sort(key=lambda t: t[0], reverse=True)
+    picked = [s for _, _, s in sorted(scored[:n], key=lambda t: t[1])]
     if level == "bullet":
-        # Split summary into sentences and format as bullet points
-        import re
-        sentences = re.split(r'(?<=[.!?])\s+', summary)
-        sentences = [s.strip() for s in sentences if s.strip()]
-        if len(sentences) >= 2:
-            summary = "\n• " + "\n• ".join(sentences)
-    
-    return summary
+        return "\n• " + "\n• ".join(picked)
+    return " ".join(picked)
 
 
 # --- Main CLI ---
+
 def main():
-    parser = argparse.ArgumentParser(description="Scrape, translate, and summarize a German news article.")
+    parser = argparse.ArgumentParser(
+        description="Scrape, translate, and summarize a German news article.")
     parser.add_argument("url", help="Article URL to scrape and summarize")
     parser.add_argument("level", nargs="?", default="detailed",
                         choices=["short", "detailed", "bullet", "translate"],
                         help="Summary detail level, or 'translate' for the full English translation (default: detailed)")
     args = parser.parse_args()
-    
-    print(f"Article summarization started...", file=sys.stderr)
-    
-    # Step 1: Scrape
-    print(f"  Step 1/3: Scraping article...", file=sys.stderr)
-    raw_text = scrape_article(args.url)
+
+    print("Article summarization started...", file=sys.stderr)
+
+    print("  Step 1/3: Scraping article...", file=sys.stderr)
+    title, raw_text = scrape_article(args.url)
     if not raw_text:
-        print("ERROR: Could not scrape article from URL. The site may be blocking requests or the link may be broken.")
+        print("ERROR: Could not scrape article from URL. The site may be "
+              "blocking requests or the link may be broken.")
         sys.exit(1)
     print(f"  Scraped {len(raw_text)} characters of German text.", file=sys.stderr)
-    
-    # Step 2: Translate
-    print(f"  Step 2/3: Translating German→English...", file=sys.stderr)
-    setup_translator()
+
+    print("  Step 2/3: Translating German→English (online)...", file=sys.stderr)
     en_text = translate(raw_text)
-    if not en_text or en_text == raw_text:
-        print("WARNING: Translation may have failed. Proceeding with original text.", file=sys.stderr)
-        en_text = raw_text
     print(f"  Translated to {len(en_text)} characters of English.", file=sys.stderr)
-    
-    # Step 3: Summarize or output full translation
+
     if args.level == "translate":
-        # Save full English translation to a text file
-        import tempfile, datetime
+        import datetime
         ts = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), f"translation_{ts}.txt")
+        out_path = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                f"translation_{ts}.txt")
         with open(out_path, "w", encoding="utf-8") as f:
             f.write(en_text)
-        print(f"\n{'─'*60}", file=sys.stderr)
+        print(f"\n{'─' * 60}", file=sys.stderr)
         print(f"  Full translation saved to: {out_path}", file=sys.stderr)
         print(f"  Size: {len(en_text)} characters", file=sys.stderr)
-        print(f"{'─'*60}", file=sys.stderr)
-        # Print the file path on stdout so the agent can pick it up
+        print(f"{'─' * 60}", file=sys.stderr)
         print(out_path)
     else:
-        print(f"  Step 3/3: Summarizing with BART ({args.level})...", file=sys.stderr)
+        print(f"  Step 3/3: Summarizing (extractive, {args.level})...",
+              file=sys.stderr)
         summary = summarize(en_text, args.level)
-        
-        # Output
-        print(f"\n{'─'*60}")
+        print(f"\n{'─' * 60}")
+        if title:
+            print(f"**{title}**")
         print(summary)
-        print(f"{'─'*60}")
+        print(f"{'─' * 60}")
+
 
 if __name__ == "__main__":
     main()
