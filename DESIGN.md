@@ -25,7 +25,8 @@ Fetches German news from RSS feeds → filters by location tier → translates D
 
 1. **Internal WLAN web page** ← primary reading surface (since 2026-09-06)
 2. **Discord on-demand** — `@Tipu <number> [short|detailed|bullet]` article summaries
-3. **Discord weekly digest** — Mon 09:00 (retirement pending, see §11)
+
+The former **weekly Discord digest** (Mon 09:00) was **retired 2026-09-11** — the page made it redundant and its last run failed on message delivery.
 
 ---
 
@@ -65,9 +66,9 @@ germany_news.fetch_feed() ──► tier filter (keywords tier1-3) ──► pic
 - `full news` → `--detailed` (per-source breakdown)
 - `@Tipu <number> [short|detailed|bullet]` → looks up `last_news_articles.json` → runs `summarize.py <url> <mode>` (default `detailed`)
 
-### 3c. Discord weekly digest
-- `germany-news-weekly` cron, Mon 09:00 Europe/Berlin → runs `germany_news.py`, posts to #germany-news-daily.
-- ⚠️ Last run errored (message send failed). Barely needed now that the page exists — **ask Asif whether to retire**.
+### 3c. Discord weekly digest — RETIRED 2026-09-11
+- Cron `germany-news-weekly` (Mon 09:00) was **removed** at Asif's request. `germany_news.py` still works manually if a digest is ever wanted again.
+- To recreate: isolated agentTurn, `0 9 * * 1` Europe/Berlin, run `germany_news.py`, post stdout to #germany-news-daily in <1900-char chunks.
 
 ---
 
@@ -118,7 +119,7 @@ germany-news-agent/
 | Job | Schedule | Does |
 |---|---|---|
 | `germany-news-daily` | `0 7 * * *` Europe/Berlin | Silent `web_build.py`. **No message on success** (`delivery.mode: none`); error alert → #germany-news-daily. `failureAlert.after: 1`. |
-| `germany-news-weekly` | `0 9 * * 1` Europe/Berlin | `germany_news.py` → posts digest to #germany-news-daily. |
+| ~~`germany-news-weekly`~~ | ~~`0 9 * * 1`~~ | **Retired 2026-09-11** (redundant with the web page). |
 
 ---
 
@@ -171,13 +172,16 @@ Boosts: **SZ FFB** + **Merkur FFB** (Asif lives in Germering, Landkreis Fürsten
 
 ## 11. Open items
 
-- **Weekly Discord digest**: keep or retire? (page made it redundant) — open since 2026-09-06.
-- **`summarize.py` is uncommitted** in the working tree (stdlib rewrite, 2026-08-31). Live code, not in git → commit it.
-- WLAN IP `192.168.2.217` is hardcoded in `web/server.js` display: if the router reassigns, update it (a DHCP reservation would fix this permanently).
+- WLAN IP `192.168.2.217` is hardcoded in `web/server.js` display. **DHCP reservation requested 2026-09-11** (router `192.168.2.1`, WLAN adapter MAC `60-F2-62-CE-B0-12`) — pending Asif doing it in the router UI.
 - Translation endpoints are unofficial/fragile; if all three 429 for long, consider a keyed free tier.
+- ✅ Done 2026-09-11: `summarize.py` committed (`22dd975`); weekly digest retired.
+
+## 12. Repo hygiene
+
+Work tree is clean as of `22dd975`. Commit before/after working on this repo; it has a GitHub remote but changes are **not pushed** automatically.
 
 ---
 
-## 12. Historical (v2, Pakistan laptop) — dead stack
+## 13. Historical (v2, Pakistan laptop) — dead stack
 
 `trafilatura` scrape + `argos-translate` (offline DE→EN) + `sshleifer/distilbart-cnn-6-6` (~380 MB) + phase test scripts + interactive `setup.py` wizard. Design rationale tables are preserved in git history (`git show 1d2c0e0:DESIGN.md`). Kept in the repo only as legacy phase scripts; **not used at runtime**.
