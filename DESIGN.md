@@ -1,211 +1,183 @@
-# Germany News Agent — Design Lock v2 🐅
+# Germany News Agent — Design Doc v3 (current: Windows PC) 🐯
 
-> Date: 2026-06-11
-> Status: Implemented
-
----
-
-## 1. Overview
-
-A Python-based tool that fetches German news from RSS feeds, filters by location, translates to English, and delivers curated summaries to Discord. **v2 adds on-demand article scraping + DistilBART summarization** via user interaction.
-
-**Triggers (from TOOLS.md):**
-- `germany news` → compact mode (5 local + 5 regional + 5 national)
-- `full news` → detailed mode (per-source breakdown)
-- `@Tipu <number> [short|detailed|bullet]` → on-demand article scrape + summarization
+> Updated: 2026-09-11 · Status: running in production on Asif's PC
+> Audience: future-me (Tipu) after a context reset / OpenClaw update.
+> Supersedes **v2** (2026-06-11, Pakistan-laptop era, Argos+BART stack) — v2 is in git history, its stack is **dead** on this machine.
 
 ---
 
-## 2. Architecture
+## 0. Memory map — read these first
+
+| Layer | File | What's in it |
+|---|---|---|
+| Channel state | `~/.openclaw/workspace/memory/channels/germany-news-daily.md` | Purpose, standing items, open questions |
+| Global brain | `~/.openclaw/workspace/MEMORY.md` | Sub-Memory Index + global rules |
+| Run commands + quirks | `~/.openclaw/workspace/TOOLS.md` → "Germany News Agent (rebuilt 2026-08-19)" | Exact commands, SAC/MSVC notes |
+| This repo | `DESIGN.md` (here) · `README.md` (public usage) | Architecture + how-to |
+
+Rule: channel memory holds *state*, TOOLS.md holds *commands*, this file holds *design*. Don't duplicate across them.
+
+---
+
+## 1. What it does
+
+Fetches German news from RSS feeds → filters by location tier → translates DE→EN → delivers. Zero API cost, no paid services. Three delivery surfaces today:
+
+1. **Internal WLAN web page** ← primary reading surface (since 2026-09-06)
+2. **Discord on-demand** — `@Tipu <number> [short|detailed|bullet]` article summaries
+3. **Discord weekly digest** — Mon 09:00 (retirement pending, see §11)
+
+---
+
+## 2. Architecture (current)
 
 ```
-    ┌──────────────┐      ┌──────────────┐      ┌──────────────┐
-    │  RSS Feeds   │ ──►  │  Fetch +      │ ──►  │  Filter +     │
-    │  (7 sources) │      │  Parse RSS    │      │  Rank by Tier │
-    └──────────────┘      └──────────────┘      └──────┬───────┘
-                                                        │
-                                                        ▼
-                                            ┌──────────────────────┐
-                                            │  Output numbered     │
-                                            │  article list to     │
-                                            │  Discord channel     │
-                                            │  (German, raw)       │
-                                            └──────────┬───────────┘
-                                                        │
-                                            ╔═══════════╧═══════════╗
-                                            ║  ON USER REQUEST     ║
-                                            ║  (@Tipu <number>)    ║
-                                            ╚═══════════╤═══════════╝
-                                                        │
-                                                        ▼
-                                            ┌──────────────────────┐
-                                            │  1. trafilatura:     │
-                                            │     scrape article    │
-                                            │     from URL          │
-                                            └──────────┬───────────┘
-                                                        │
-                                                        ▼
-                                            ┌──────────────────────┐
-                                            │  2. argos-translate: │
-                                            │     German → English │
-                                            │     (offline, free)  │
-                                            └──────────┬───────────┘
-                                                        │
-                                                        ▼
-                                            ┌──────────────────────┐
-                                            │  3. sshleifer/       │
-                                            │     distilbart-      │
-                                            │     cnn-6-6:         │
-                                            │     Summarize (EN)   │
-                                            └──────────┬───────────┘
-                                                        │
-                                                        ▼
-                                            ┌──────────────────────┐
-                                            │  4. Output summary   │
-                                            │     to Discord       │
-                                            └──────────────────────┘
+RSS feeds (7, config.json)
+        │  urllib
+        ▼
+germany_news.fetch_feed() ──► tier filter (keywords tier1-3) ──► pick_mixed() round-robin
+        │
+        ├─► web_build.py  : translate title+desc, write web/data/*.json   ← daily 07:00
+        │        └─ summarize.translate()  (cache: web/data/cache.json)
+        │
+        └─► germany_news.py : Discord/terminal text output + last_news_articles.json  ← manual / weekly
+                                    │
+                                    ▼
+                        web/server.js (zero-dep Node, :8090)
+                          serves public/index.html + /api/*
+                          on demand runs summarize.py <url> translate  (job queue, page polls)
 ```
 
----
-
-## 3. Design Decisions (Grill Sessions)
-
-### 3.1 Article Content Source
-| Decision | Choice | Rationale |
-|----------|--------|-----------|
-| Scraping library | `trafilatura` | Lighter, maintained, purpose-built for article extraction |
-| When to scrape | On-demand only | Scrape only the article(s) the user explicitly requests |
-| Fallback on scrape failure | Use RSS description as-is (no BART) | Don't crash, just return what we have |
-
-### 3.2 Numbering Scheme
-| Decision | Choice |
-|----------|--------|
-| Numbering style | Flat single numbers (1, 2, 3...) across the entire output |
-| Mapping file | `last_news_articles.json` — rewritten every run, maps number → article metadata |
-| Persistence | Only the last session's articles; replaced next time news is fetched |
-
-### 3.3 Trigger Mechanism
-| Decision | Choice |
-|----------|--------|
-| Trigger format | `@Tipu <number> [qualifier]` |
-| Qualifiers | `short` (1-2 sentences), `detailed` (3-5 para), `bullet` (key points) |
-| Default qualifier | `detailed` if omitted |
-| Scope | Only acts when mentioned — ignores bare number messages in channel |
-
-### 3.4 Summary Model
-| Decision | Choice |
-|----------|--------|
-| Model | `sshleifer/distilbart-cnn-6-6` (~380 MB) |
-| Why this model | Distilled BART-large (6+6 layers, ~306M params). Good quality, light CPU inference, fits 8 GB RAM |
-| Download | Auto-download from HuggingFace on first use |
-| Language | English — full article is translated via argos-translate before summarization |
-
-### 3.5 Language Pipeline
-| Step | Tool | Input | Output |
-|------|------|-------|--------|
-| Fetch RSS | `urllib` | Feed URLs | German headlines + descriptions |
-| Filter | Regex keywords | German article metadata | Ranked articles by tier |
-| Scrape | `trafilatura` | Article URL | Full German article text |
-| Translate | `argos-translate` | German text | English text |
-| Summarize | `sshleifer/distilbart-cnn-6-6` | English text | English summary |
+**Two entry scripts share one fetch/filter core** (`germany_news.py` is imported by `web_build.py` — don't refactor it away).
 
 ---
 
-## 4. Data Flow: `@Tipu <number>`
+## 3. Surfaces
 
-1. User triggers `full news` or `germany news` → script runs, posts numbered article list to Discord
-2. Script saves `last_news_articles.json`:
-```json
-{
-  "timestamp": "2026-06-11T22:00:00+05:00",
-  "mode": "compact",
-  "articles": {
-    "1": { "source": "SZ FFB", "title": "...", "url": "https://...",
-           "rss_desc": "..." },
-    "2": { ... },
-    ...
-  }
-}
-```
-3. User replies: `@Tipu 5 detailed`
-4. Agent reads `last_news_articles.json`, finds article #5
-5. Agent runs `python summarize.py "<url>" detailed`:
-   - `trafilatura` scrapes full text from URL
-   - `argos-translate` translates German → English
-   - `sshleifer/distilbart-cnn-6-6` summarizes English text (detail level depends on qualifier)
-6. Agent posts summary to Discord
+### 3a. Web reader (primary)
+- URL: `http://192.168.2.217:8090` (LAN) · `http://localhost:8090` (host). Binds `0.0.0.0`.
+- Flow: headlines → tap for EN summary → "Full EN translation" button → server queues `summarize.py <url> translate`, page polls `/api/translate` until done.
+- Finished translations cached in `web/data/translations/` — **never retranslated**.
+- Auto-starts at logon via Startup VBS: `web/start-germany-news-web.vbs` (manual: `web/start-server.cmd`). Log: `web/server.log`.
+
+### 3b. Discord on-demand
+- `germany news` → compact (5 local / 5 bavaria / 5 germany)
+- `full news` → `--detailed` (per-source breakdown)
+- `@Tipu <number> [short|detailed|bullet]` → looks up `last_news_articles.json` → runs `summarize.py <url> <mode>` (default `detailed`)
+
+### 3c. Discord weekly digest
+- `germany-news-weekly` cron, Mon 09:00 Europe/Berlin → runs `germany_news.py`, posts to #germany-news-daily.
+- ⚠️ Last run errored (message send failed). Barely needed now that the page exists — **ask Asif whether to retire**.
 
 ---
 
-## 5. File Structure
+## 4. Why everything is stdlib-only now (important)
+
+Windows **Smart App Control** is in Enforcement mode (`VerifiedAndReputablePolicyState=1`) and blocks unsigned native DLLs. Killed:
+- `sentencepiece` / `ctranslate2` → **Argos offline translation dead**
+- `lxml.etree` → **trafilatura scraping dead**
+- `torch shm.dll` → **DistilBART summarization dead**
+
+Response:
+- `germany_news.py` guards the Argos import → falls back to **online translation** (cache + 0.25 s politeness delay).
+- `summarize.py` was **rebuilt as pure stdlib** (urllib + html.parser scrape, online translate, extractive lead+word-freq summary). No lxml/torch.
+- Translation chain everywhere: **Google gtx → Google dict-chrome-ex (`clients5.google.com`) → MyMemory**.
+- **Don't re-enable local models** without signing the DLLs or disabling SAC (Asif's call).
+
+MSVC quirk: the venv's `sitecustomize.py` registers `_runtime_dlls` (from pip `msvc-runtime`) because the PC lacks VC++ redistributable. **Don't delete it.**
+
+---
+
+## 5. File map
 
 ```
 germany-news-agent/
-├── config.json              # Feeds, keywords, tier config
-├── germany_news.py          # Main script (fetch, filter, translate, output + mapping)
-├── summarize.py             # On-demand: trafilatura scrape + translate + DistilBART
-├── setup.py                 # Interactive setup wizard for new users
-├── last_news_articles.json  # Runtime: flat numbered article map (auto-generated)
-├── phase1_fetch.py          # Phase test: fetch RSS feeds only
-├── phase2_filter.py         # Phase test: filter + rank articles
-├── phase3_translate_test.py # Phase test: argos-translate setup
-├── requirements.txt         # Python dependencies
-├── README.md                # Usage docs + setup wizard instructions
-├── DESIGN.md                # This file
-├── .gitignore
+├── config.json              # feeds, tier keywords, counts — EDIT THIS to retune
+├── germany_news.py          # fetch + filter + rank + Discord text + mapping core
+├── web_build.py             # daily build → web/data/*.json (+ persistent EN cache)
+├── summarize.py             # on-demand: stdlib scrape + online translate + summary
+├── setup.py                 # interactive onboarding wizard (stdlib only)
+├── last_news_articles.json  # number → article map for @Tipu <number> (mode: "web")
+├── web/
+│   ├── server.js            # zero-dep Node server, :8090, job queue for translations
+│   ├── public/index.html    # the reader UI (no build step)
+│   ├── data/news/<date>.json# one file per day (kept 30 days, pruned)
+│   ├── data/latest.json     # copy of newest day
+│   ├── data/days.json       # date index (newest first)
+│   ├── data/cache.json      # persistent DE→EN cache (repeated stories cost nothing)
+│   ├── data/translations/   # finished full translations
+│   ├── start-server.cmd · start-germany-news-web.vbs · server.log
+├── phase1_fetch.py · phase2_filter.py · phase3_translate_test.py  # legacy phase tests
+└── README.md · DESIGN.md · requirements.txt · .gitignore
 ```
 
 ---
 
-## 6. Dependencies
+## 6. Crons (OpenClaw, `sessionTarget: isolated`)
 
-```txt
-argostranslate==1.11.0
-ctranslate2==4.8.0
-sentencepiece==0.2.1
-sacremoses==0.1.1
-trafilatura                # Article text extraction
-transformers               # DistilBART model
-torch                      # PyTorch (CPU)
-```
-
-*(No additional deps for setup.py — it uses only stdlib.)*
-
-| Resource | Size | When |
-|----------|------|------|
-| argos-translate model | ~50 MB | First run (already installed) |
-| distilbart-cnn-6-6 | ~380 MB | First `@Tipu` trigger |
-| Per-summary runtime | ~5-15s CPU | Each trigger |
+| Job | Schedule | Does |
+|---|---|---|
+| `germany-news-daily` | `0 7 * * *` Europe/Berlin | Silent `web_build.py`. **No message on success** (`delivery.mode: none`); error alert → #germany-news-daily. `failureAlert.after: 1`. |
+| `germany-news-weekly` | `0 9 * * 1` Europe/Berlin | `germany_news.py` → posts digest to #germany-news-daily. |
 
 ---
 
-## 7. Edge Cases & Error Handling
+## 7. Run commands (PowerShell)
+
+```powershell
+cd C:\Users\anade\projects\germany-news-agent
+$env:PYTHONIOENCODING='utf-8'
+
+.venv\Scripts\python.exe web_build.py                    # daily web build (manual)
+.venv\Scripts\python.exe germany_news.py                 # compact Discord/terminal text
+.venv\Scripts\python.exe germany_news.py --detailed      # per-source breakdown
+.venv\Scripts\python.exe summarize.py "<url>" [short|detailed|bullet|translate]
+```
+
+---
+
+## 8. Section caps (tune in `web_build.py` → `SECTIONS`)
+
+`LOCAL (FFB Region)` tiers {1,2} cap **12** · `BAVARIA` tier {3} cap **7** · `GERMANY` tier {4} cap **7** · `FETCH_PER_FEED = 15`.
+
+`config.json` tunables: `feeds`, `keywords.tier1/2/3`, `feed_boost`, `compact_counts`, `detailed_per_source`.
+Boosts: **SZ FFB** + **Merkur FFB** (Asif lives in Germering, Landkreis Fürstenfeldbruck).
+
+---
+
+## 9. Edge cases / error handling
 
 | Scenario | Handling |
-|----------|----------|
-| `last_news_articles.json` missing | Reply: "No recent news found — run `germany news` or `full news` first" |
-| Article number out of range | Reply: "Article #X not found — valid numbers: Y-Z" |
-| Scrape fails (403/blocked) | Return RSS description as-is (no BART summary) |
-| BART model not yet cached | Auto-downloads on first call (~380 MB, ~1-2 min) |
-| BART inference fails | Return translated full text instead |
-| Trigger without number | Reply with usage: `@Tipu <number> [short|detailed|bullet]` |
+|---|---|
+| Zero articles fetched | `web_build.py` exits non-zero, **previous day's data untouched** (by design) |
+| Translation endpoint 429 | Falls through chain gtx → dict-chrome-ex → MyMemory; caches only successful results |
+| All endpoints fail | Original German text returned (never empty/crash) |
+| `last_news_articles.json` missing | Reply: "No recent news found — run `germany news`/`full news` first" |
+| Article # out of range | Reply: "Article #X not found — valid numbers: 1-N" |
+| Repeated build same date | Overwrites that day's file; days older than 30 pruned |
+| Translation of same article twice | Served from `web/data/translations/` cache |
 
 ---
 
-## 8. Summary Level Definitions
+## 10. Post-update pickup checklist
 
-| Qualifier | Max Length | Min Length | Format |
-|-----------|-----------|-----------|--------|
-| `short` | 60 | 15 | 1-2 sentence gist |
-| `detailed` (default) | 150 | 40 | 3-5 sentence paragraph |
-| `bullet` | 180 | 50 | Detailed summary split into bullet points |
+1. Read `memory/channels/germany-news-daily.md` + `TOOLS.md` → "Germany News Agent".
+2. Confirm web server up: `http://localhost:8090/api/health` (returns running-job count).
+3. Confirm cron `germany-news-daily` ran today (status `ok`, duration ~95 s).
+4. If the page is stale: run `web_build.py` manually, check `web/server.log`.
+5. Don't touch `_runtime_dlls` / `sitecustomize.py`; don't re-add Argos/BART.
 
 ---
 
-## 9. Testing Status
+## 11. Open items
 
-- ✅ `germany_news.py` compact mode — fetches, filters, numbers, saves mapping
-- ✅ `germany_news.py` detailed mode — same with per-source breakdown
-- ✅ `summarize.py` scraping — trafilatura extracts article text from SZ/FAZ/etc.
-- ✅ `summarize.py` translation — argos-translate DE→EN working
-- ✅ `summarize.py` BART — distilbart-cnn-6-6 loaded and tested
+- **Weekly Discord digest**: keep or retire? (page made it redundant) — open since 2026-09-06.
+- **`summarize.py` is uncommitted** in the working tree (stdlib rewrite, 2026-08-31). Live code, not in git → commit it.
+- WLAN IP `192.168.2.217` is hardcoded in `web/server.js` display: if the router reassigns, update it (a DHCP reservation would fix this permanently).
+- Translation endpoints are unofficial/fragile; if all three 429 for long, consider a keyed free tier.
+
+---
+
+## 12. Historical (v2, Pakistan laptop) — dead stack
+
+`trafilatura` scrape + `argos-translate` (offline DE→EN) + `sshleifer/distilbart-cnn-6-6` (~380 MB) + phase test scripts + interactive `setup.py` wizard. Design rationale tables are preserved in git history (`git show 1d2c0e0:DESIGN.md`). Kept in the repo only as legacy phase scripts; **not used at runtime**.
