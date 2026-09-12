@@ -11,6 +11,7 @@ Fetches German news from RSS feeds, filters it by *your* location tiers, transla
 - A clean, mobile-first reading page (headlines grouped **Local / Bavaria / Germany**)
 - Tap a headline → English summary; **"Full EN translation"** button → whole article translated on demand
 - Day navigation — keeps the last 30 days
+- A **Settings tab** in the page — edit `config.json` (feeds + location tiers) from any device, **Save** (keeps a backup) and **Rebuild now** to refetch with your settings
 - Optional: Discord posts and `@Tipu <number>` on-demand article summaries (OpenClaw integration)
 
 ---
@@ -130,6 +131,17 @@ Everything is driven by **`config.json`** — no Python knowledge required:
 | `detailed_per_source` | Articles per source in Discord detailed mode |
 
 Section sizes for the web page live in `web_build.py` → `SECTIONS` (`LOCAL` 12, `BAVARIA` 7, `GERMANY` 7) and `FETCH_PER_FEED`.
+
+### Editing the config from the page (no editor needed)
+
+The **Settings** tab in the reader edits `config.json` directly:
+
+1. Open the page → **Settings** (works from your phone too).
+2. Change the JSON — set your own `feeds` and `tier1` / `tier2` / `tier3` keywords.
+3. **Save** — the server validates it and keeps the previous version as `config.json.bak`.
+4. **Rebuild now** — runs `web_build.py` in the background (~1–2 min) and the page switches back to Headlines with your new region.
+
+Guardrails: the server rejects a config that is not an object, or whose `feeds` / `keywords` have the wrong shape — so a typo cannot silently break the daily build. The API is `GET /api/config`, `POST /api/config`, `POST /api/rebuild`, `GET /api/rebuild`.
 
 ---
 

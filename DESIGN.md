@@ -60,6 +60,7 @@ germany_news.fetch_feed() ──► tier filter (keywords tier1-3) ──► pic
 - Flow: headlines → tap for EN summary → "Full EN translation" button → server queues `summarize.py <url> translate`, page polls `/api/translate` until done.
 - Finished translations cached in `web/data/translations/` — **never retranslated**.
 - Auto-starts at logon via Startup VBS: `web/start-germany-news-web.vbs` (manual: `web/start-server.cmd`). Log: `web/server.log`.
+- Two tabs: **Headlines** and **Settings**. Settings edits `config.json` from the page (validated, backs up to `config.json.bak`) and a **Rebuild now** button runs `web_build.py` server-side (~1–2 min, progress streamed to the page). Endpoints: `GET/POST /api/config`, `POST/GET /api/rebuild`.
 
 ### 3b. Discord on-demand
 - `germany news` → compact (5 local / 5 bavaria / 5 germany)

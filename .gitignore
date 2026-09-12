@@ -6,3 +6,4 @@ translation_*.txt
 web/data/
 web/*.log
 .venv/
+config.json.bak

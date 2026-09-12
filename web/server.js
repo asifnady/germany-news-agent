@@ -5,6 +5,10 @@
 //   GET  /api/news?date=YYYY-MM-DD → day JSON + per-article translation state
 //   POST /api/translate {date,id}  → enqueue full DE→EN translation job
 //   GET  /api/translate?date=&id=  → { status, progress, error?, text? }
+//   GET  /api/config               → { path, config } (parsed config.json)
+//   POST /api/config {config}      → validate + save config.json (backup .bak)
+//   POST /api/rebuild              → run web_build.py in background
+//   GET  /api/rebuild              → { status, progress, error? }
 //   GET  /api/health               → { ok, queue }
 //
 // One translation runs at a time (politeness to free endpoints). Finished
@@ -25,6 +29,9 @@ const JOBS_PATH = path.join(DATA, 'jobs.json');
 const REPO = path.join(ROOT, '..');
 const PY = path.join(REPO, '.venv', 'Scripts', 'python.exe');
 const SUMMARIZE = path.join(REPO, 'summarize.py');
+const CONFIG_PATH = path.join(REPO, 'config.json');
+const WEB_BUILD = path.join(REPO, 'web_build.py');
+const REBUILD_TIMEOUT_MS = 20 * 60 * 1000;
 const PORT = Number(process.env.PORT || 8090);
 const JOB_TIMEOUT_MS = 25 * 60 * 1000;
 
@@ -188,6 +195,68 @@ function readBody(req, limit) {
   });
 }
 
+// --- Config editor + rebuild -------------------------------------------
+function validConfig(cfg) {
+  if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return 'config must be a JSON object';
+  if (cfg.feeds !== undefined
+      && (!cfg.feeds || typeof cfg.feeds !== 'object' || Array.isArray(cfg.feeds))) {
+    return 'feeds must be an object of "Name": "rss-url"';
+  }
+  if (cfg.keywords !== undefined) {
+    if (!cfg.keywords || typeof cfg.keywords !== 'object' || Array.isArray(cfg.keywords)) {
+      return 'keywords must be an object with tier1 / tier2 / tier3 arrays';
+    }
+    for (const [k, v] of Object.entries(cfg.keywords)) {
+      if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) {
+        return `keywords.${k} must be an array of strings`;
+      }
+    }
+  }
+  return null;
+}
+
+let rebuildJob = { status: 'idle', progress: '', error: null, startedAt: null, finishedAt: null, lines: [] };
+
+function runRebuild() {
+  if (rebuildJob.status === 'running') return false;
+  rebuildJob = { status: 'running', progress: 'Starting…', error: null,
+                 startedAt: new Date().toISOString(), finishedAt: null, lines: [] };
+  const child = spawn(PY, [WEB_BUILD], {
+    cwd: REPO,
+    env: { ...process.env, PYTHONIOENCODING: 'utf-8' },
+    windowsHide: true,
+  });
+  const timer = setTimeout(() => { try { child.kill(); } catch {} }, REBUILD_TIMEOUT_MS);
+  const onData = (d) => {
+    const lines = d.toString('utf8').split(/\r?\n/).filter(Boolean);
+    if (!lines.length) return;
+    rebuildJob.lines = rebuildJob.lines.concat(lines).slice(-40);
+    rebuildJob.progress = lines[lines.length - 1].trim();
+  };
+  child.stdout.on('data', onData);
+  child.stderr.on('data', onData);
+  child.on('error', (e) => {
+    clearTimeout(timer);
+    rebuildJob.status = 'error';
+    rebuildJob.error = String((e && e.message) || e);
+    rebuildJob.finishedAt = new Date().toISOString();
+  });
+  child.on('close', (code) => {
+    clearTimeout(timer);
+    if (rebuildJob.status === 'running') {
+      if (code === 0) { rebuildJob.status = 'done'; rebuildJob.progress = 'Done'; }
+      else {
+        rebuildJob.status = 'error';
+        rebuildJob.error = rebuildJob.lines.slice(-3).join(' | ') || `web_build.py exited with code ${code}`;
+      }
+    }
+    rebuildJob.finishedAt = new Date().toISOString();
+    console.log(`[rebuild] → ${rebuildJob.status}${rebuildJob.error ? ': ' + rebuildJob.error : ''}`);
+  });
+  console.log('[rebuild] started web_build.py');
+  return true;
+}
+
 // --- Static + routing ---------------------------------------------------
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -247,6 +316,37 @@ const server = http.createServer(async (req, res) => {
       enqueue(date, id, art.url, art.title);
       console.log(`[translate] queued ${date}_${id} (${art.source})`);
       return send(res, 200, { status: 'queued' });
+    }
+
+    if (p === '/api/config' && req.method === 'GET') {
+      const cfg = readJson(CONFIG_PATH, null);
+      if (!cfg) return send(res, 500, { error: 'config.json is missing or not valid JSON' });
+      return send(res, 200, { path: 'config.json', config: cfg });
+    }
+
+    if (p === '/api/config' && req.method === 'POST') {
+      const body = await readBody(req, 512 * 1024);
+      const cfg = body && body.config;
+      const bad = validConfig(cfg);
+      if (bad) return send(res, 400, { error: bad });
+      try {
+        if (fs.existsSync(CONFIG_PATH)) fs.copyFileSync(CONFIG_PATH, CONFIG_PATH + '.bak');
+        fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2) + '\n', 'utf8');
+      } catch (e) {
+        return send(res, 500, { error: 'could not write config.json: ' + ((e && e.message) || e) });
+      }
+      console.log(`[config] saved by ${req.socket.remoteAddress || '?'}`);
+      return send(res, 200, { ok: true, backedUp: true });
+    }
+
+    if (p === '/api/rebuild' && req.method === 'POST') {
+      const started = runRebuild();
+      return send(res, 200, { status: rebuildJob.status, started });
+    }
+
+    if (p === '/api/rebuild' && req.method === 'GET') {
+      const { status, progress, error, finishedAt } = rebuildJob;
+      return send(res, 200, { status, progress, error, finishedAt });
     }
 
     if (p === '/api/health') {
