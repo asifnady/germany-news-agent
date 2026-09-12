@@ -1,158 +1,187 @@
 # Germany News Agent 🐅
 
-A Python tool that fetches German news from RSS feeds, translates them to English (offline, free), and delivers curated summaries to Discord or terminal — with on-demand article summarization via DistilBART.
+Fetches German news from RSS feeds, filters it by *your* location tiers, translates it to English with free online services, and serves it as a self-hosted reading page on your local network — plus optional Discord delivery if you run it under OpenClaw.
 
-Zero API costs. Fully offline after first setup.
+**No API keys. No paid services. No build step.**
 
-## Features
+---
 
-- **Fetches** RSS feeds from 7 German news sources (SZ, FAZ, Bild, Merkur, Presseportal)
-- **Filters** by location keywords across three tiers: local → regional → national
-- **Translates** headlines + full articles German → English via argos-translate (100% free, offline)
-- **Ranks & mixes** round-robin across sources for balanced coverage
-- **On-demand summarization** — scrape any article URL, translate to English, summarize with DistilBART
-- **Discord integration** — trigger via simple commands
+## What you get
 
-## Modes
+- A clean, mobile-first reading page (headlines grouped **Local / Bavaria / Germany**)
+- Tap a headline → English summary; **"Full EN translation"** button → whole article translated on demand
+- Day navigation — keeps the last 30 days
+- Optional: Discord posts and `@Tipu <number>` on-demand article summaries (OpenClaw integration)
 
-| Mode | Command | What it does |
-|------|---------|-------------|
-| Compact | `germany news` | Top 5 local + 5 regional + 5 national headlines (flat-numbered) |
-| Detailed | `full news` | Per-source breakdown, top 5 per source per tier (flat-numbered) |
-| Summarize | `@Tipu <number> [short\|detailed\|bullet]` | Scrape + translate + BART summarize a specific article |
+---
 
-### Summary Levels
+## Requirements
 
-| Qualifier | Length | Format |
-|-----------|--------|--------|
-| `short` | 1-2 sentences | Gist |
-| `detailed` (default) | 3-5 sentences | Paragraph |
-| `bullet` | Key points | Bullet list |
+- **Python 3.9+** — the pipeline is **pure standard library**, so there is nothing to `pip install`
+- **Node.js 18+** — the web server is zero-dependency (no `npm install`)
+- Internet access — RSS feeds and translation both happen online
 
-## Quick Start (Generic)
+---
 
-1. Clone this repository:
-   ```bash
-   git clone https://github.com/your-username/germany-news-agent.git
-   cd germany-news-agent
-   ```
-2. Install requirements:
-   ```bash
-   pip install -r requirements.txt
-   ```
-3. Configure your region:
-   Edit `config.json` to set your RSS feeds, location keywords, and preferences.
-4. Run the web reader:
-   ```bash
-   # Start the translation & build service
-   python web_build.py
-   # Start the local web server
-   node web/server.js
-   ```
-   Open `http://localhost:8090` in your browser.
-
-### On-Demand Summarization
+## Quick start
 
 ```bash
-# Scrape, translate, and summarize any German article URL
-python summarize.py "https://www.sueddeutsche.de/muenchen/example" detailed
-python summarize.py "https://example.com/artikel" short
-python summarize.py "https://example.com/artikel" bullet
+git clone https://github.com/asifnady/germany-news-agent.git
+cd germany-news-agent
+
+python web_build.py      # fetch + filter + translate → writes web/data/
+node web/server.js       # serve the page on port 8090
 ```
 
-First `summarize.py` call downloads DistilBART (~380 MB). Subsequent calls are instant.
+Then open **<http://localhost:8090>**.
 
-## Customizing for Your Region
+`web_build.py` must run once before the page has anything to show. Run it daily (cron / Task Scheduler) and the page always has fresh news.
 
-Don't live in Munich? Edit **`config.json`** — no Python knowledge needed:
+---
+
+## Serving it on your local network
+
+The server binds to `0.0.0.0:8090`, so it is reachable from **any device on your LAN** — phone, tablet, TV browser — as soon as it is running.
+
+**1. Find the host's LAN IP**
+
+| OS | Command |
+|---|---|
+| Windows | `ipconfig` → *IPv4 Address* |
+| Linux | `hostname -I` |
+| macOS | `ipconfig getifaddr en0` |
+
+**2. Open the page from your phone**
+
+```
+http://<LAN-IP>:8090          e.g. http://192.168.2.217:8090
+```
+
+**3. Allow it through the firewall**
+
+- **Windows:** the first run pops a prompt — tick *Private networks* and allow. If you missed it: *Firewall → Allow an app → Node.js*.
+- **Linux:** `sudo ufw allow 8090/tcp`
+- **macOS:** usually allowed by default on the same network.
+
+**4. Keep the address stable**
+
+Ask your router for a **DHCP reservation** for this machine (bind its MAC to a fixed IP). Otherwise the URL changes when the lease renews — and any bookmark, phone shortcut, or script breaks.
+
+**5. Start it automatically**
+
+| OS | How |
+|---|---|
+| Windows | shortcut in `shell:startup` → `web\start-server.cmd` (a hidden-VBS launcher is included) |
+| Linux | systemd user unit with `ExecStart=/usr/bin/node /path/web/server.js` |
+| macOS | a `launchd` plist |
+
+**6. Notes**
+
+- **No authentication.** It is a LAN convenience page. Never port-forward it to the internet.
+- Change the port: `PORT=8091 node web/server.js`
+- Logs (Windows launcher): `web/server.log`
+
+---
+
+## Translation: the free online services
+
+The whole system is built around three **free, key-less translation endpoints**, tried in order:
+
+| # | Service | Endpoint | Notes |
+|---|---|---|---|
+| 1 | Google gtx | `translate.googleapis.com/translate_a/single?client=gtx` | best quality, rate-limits first |
+| 2 | Google dict-chrome-ex | `clients5.google.com/translate_a/t?client=dict-chrome-ex` | different frontend, often survives when gtx 429s |
+| 3 | MyMemory | `api.mymemory.translated.net/get` | anonymous quota, ~500 chars/request |
+
+How it behaves:
+
+- **Chunking** — long text is split into ~450-character chunks on paragraph/sentence boundaries (MyMemory's limit), translated piece by piece, then rejoined.
+- **Caching** — every successful translation is stored. `web/data/cache.json` holds headlines/summaries; `web/data/translations/` holds finished full articles. Nothing is ever translated twice, so repeat reading costs zero requests.
+- **Politeness** — a 0.25 s pause between calls keeps all three endpoints friendly.
+- **Rate limits** — `HTTP 429` from any endpoint is normal under heavy use. The chain immediately falls through to the next one. If all three fail, the **German text is kept** rather than dropping content.
+- **Want a guaranteed provider?** `translate()` in `summarize.py` is the single choke point used by both the daily build and on-demand translation — swap in a keyed API (DeepL, Google Cloud Translate) there and nothing else changes.
+
+---
+
+## Customize it for your region
+
+Everything is driven by **`config.json`** — no Python knowledge required:
 
 ```json
 {
-  "feeds": {
-    "My Local Paper": "https://example.com/rss"
-  },
+  "feeds": { "My Local Paper": "https://example.com/rss" },
   "keywords": {
-    "tier1": ["my-city", "my-town"],
-    "tier2": ["my-region"],
-    "tier3": ["my-country"]
+    "tier1": ["my-town", "my-district"],
+    "tier2": ["my-city", "my-region"],
+    "tier3": ["my-state"]
   },
   "feed_boost": ["My Local Paper"]
 }
 ```
 
 | Setting | What it does |
-|---------|-------------|
+|---|---|
 | `feeds` | RSS feed URLs and display names |
-| `keywords.tier1` | Highest priority — exact keyword matches get top billing |
-| `keywords.tier2` | Regional coverage |
-| `keywords.tier3` | National coverage |
-| `feed_boost` | Feeds that default to tier 2 even without keyword matches |
-| `compact_counts` | How many articles per section in compact mode |
-| `detailed_per_source` | How many articles per source in detailed mode |
+| `keywords.tier1` | Your town / district — highest priority |
+| `keywords.tier2` | Your city / surrounding region |
+| `keywords.tier3` | Your state / country |
+| `feed_boost` | Local papers promoted a tier even without a keyword hit |
+| `compact_counts` | Articles per section in Discord compact mode |
+| `detailed_per_source` | Articles per source in Discord detailed mode |
 
-## Requirements
+Section sizes for the web page live in `web_build.py` → `SECTIONS` (`LOCAL` 12, `BAVARIA` 7, `GERMANY` 7) and `FETCH_PER_FEED`.
 
-- Python 3.9+
-- ~2 GB free disk (PyTorch + translation model + DistilBART)
-- Internet connection (first run only; model downloads)
+---
 
-## Project Structure
+## On-demand summaries (CLI)
+
+```bash
+python summarize.py "<article-url>" short      # 1-2 sentences
+python summarize.py "<article-url>" detailed   # 3-5 sentences (default)
+python summarize.py "<article-url>" bullet     # key points
+python summarize.py "<article-url>" translate  # full English text → translation_*.txt
+```
+
+---
+
+## Optional: Discord / OpenClaw integration
+
+- `@Tipu <number> [short|detailed|bullet]` → scrapes and summarizes a numbered article from the last run
+- A daily job can rebuild the page silently and alert you only on failure
+- `python setup.py` walks through workspace path, channel, and schedule for a fresh install
+
+---
+
+## Project structure
 
 ```
 germany-news-agent/
-├── config.json              # 🎯 Edit this for your region
-├── germany_news.py          # Main script (fetch, filter, translate, output + article mapping)
-├── summarize.py             # On-demand: scrape + translate + DistilBART summarization
-├── requirements.txt         # Python dependencies
-├── DESIGN.md                # Architecture decisions & design docs
-├── last_news_articles.json  # Runtime: flat numbered article map (auto-generated, gitignored)
-├── README.md                # This file
-└── .gitignore
+├── config.json              # 🎯 edit this for your region
+├── germany_news.py          # fetch + filter + rank core, Discord/terminal output
+├── web_build.py             # daily build → web/data/*.json (+ translation cache)
+├── summarize.py             # scrape + translate + summarize one article (stdlib)
+├── web/
+│   ├── server.js            # zero-dep Node server — page + API on :8090
+│   ├── public/index.html    # the reader UI
+│   ├── start-server.cmd     # Windows launcher
+│   ├── start-germany-news-web.vbs
+│   └── data/                # generated: news/<date>.json, latest.json, days.json,
+│                            #   cache.json, translations/   (gitignored)
+├── setup.py                 # onboarding wizard for OpenClaw users
+├── DESIGN.md                # architecture + design decisions
+├── requirements.txt         # empty by design (stdlib pipeline)
+└── LICENSE                  # MIT
 ```
 
-## Tech Stack
+---
 
-- **Python 3** — core logic
-- **argos-translate** — free offline neural machine translation (German→English)
-- **trafilatura** — article text extraction from URLs
-- **sshleifer/distilbart-cnn-6-6** — distilled BART summarization (306M params, CPU-friendly)
-- **RSS/XML** — all data sourced from public newspaper feeds
-- **Zero API costs** — no OpenAI, no DeepL, no paid services
+## Legacy: the old offline stack
 
-## Discord / OpenClaw Integration
+v2 of this tool ran fully offline using `argos-translate` (neural MT) + `trafilatura` (scraping) + `DistilBART` (summarization). On Windows with **Smart App Control in Enforcement mode**, those native DLLs (`sentencepiece`, `ctranslate2`, `lxml.etree`, `torch`) are blocked and the stack cannot load.
 
-### Option A: Use the setup wizard (easiest)
-```bash
-python setup.py
-```
-It prompts for your workspace path, Discord channel, and schedule — then outputs everything including:
-- TOOLS.md trigger commands (copied to your OpenClaw workspace)
-- Cron job JSON (ready to paste)
+The current pipeline replaces all three with stdlib scraping, online translation, and extractive summarization. The old dependencies remain listed (commented) in `requirements.txt` for anyone on a machine that allows them — see DESIGN.md for the full story.
 
-### Option B: Manual setup
-
-1. Place the script folder on your machine
-2. Add trigger handlers to your agent configuration:
-   - `germany news` → compact mode
-   - `full news` → detailed mode
-   - `@Tipu <number>` → scrape + summarize that article
-3. Set up an OpenClaw cron job for scheduled news:
-```json
-{
-  "name": "germany-news-weekly",
-  "schedule": { "kind": "cron", "expr": "30 9 * * 1", "tz": "Europe/Berlin" },
-  "sessionTarget": "isolated",
-  "payload": {
-    "kind": "agentTurn",
-    "message": "cd /path/to/germany-news-agent && python germany_news.py"
-  },
-  "delivery": { "mode": "announce", "channel": "discord", "to": "channel:YOUR_CHANNEL_ID" }
-}
-```
-
-## Architecture
-
-See [DESIGN.md](DESIGN.md) for full architecture decisions, data flow diagrams, and design rationale.
+---
 
 ## License
 

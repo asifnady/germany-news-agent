@@ -1,7 +1,21 @@
-argostranslate==1.11.0
-ctranslate2==4.8.0
-sentencepiece==0.2.1
-sacremoses==0.1.1
-trafilatura>=1.12.0
-transformers>=4.44.0
-torch>=2.4.0
+# Germany News Agent — dependencies
+#
+# The current pipeline is PURE STANDARD LIBRARY:
+#   web_build.py, summarize.py, germany_news.py, setup.py
+#   → nothing to install. Just Python 3.9+ and Node.js for the web server.
+#
+# Translation uses free online endpoints (no key, no package) and
+# summarization is extractive. See README.md → "Translation: the free online services".
+#
+# ---------------------------------------------------------------------------
+# LEGACY (v2 offline stack) — only needed if you want offline translation +
+# DistilBART summarization. Uncomment ONLY on a machine that permits these
+# native DLLs. Windows Smart App Control (Enforcement) blocks them.
+# ---------------------------------------------------------------------------
+# argostranslate==1.11.0
+# ctranslate2==4.8.0
+# sentencepiece==0.2.1
+# sacremoses==0.1.1
+# trafilatura>=1.12.0
+# transformers>=4.44.0
+# torch>=2.4.0

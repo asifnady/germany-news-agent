@@ -70,6 +70,13 @@ germany_news.fetch_feed() ──► tier filter (keywords tier1-3) ──► pic
 - Cron `germany-news-weekly` (Mon 09:00) was **removed** at Asif's request. `germany_news.py` still works manually if a digest is ever wanted again.
 - To recreate: isolated agentTurn, `0 9 * * 1` Europe/Berlin, run `germany_news.py`, post stdout to #germany-news-daily in <1900-char chunks.
 
+### 3d. Local network serving (how it reaches phones)
+- `web/server.js` binds **`0.0.0.0:8090`** → reachable from any LAN device at `http://<host-LAN-IP>:8090`; host IP here is `192.168.2.217`.
+- Firewall: node.exe allowed inbound on Private networks (Windows). No auth — **LAN only, never port-forward**.
+- Autostart at logon: `web/start-germany-news-web.vbs` (Startup folder) → `web/start-server.cmd` → `node web/server.js`, output appended to `web/server.log`.
+- Port override: `PORT=8091 node web/server.js`. Stable URL needs a router DHCP reservation (see §11).
+- Full user-facing steps (find LAN IP, phone access, autostart per OS, firewall) live in **README → "Serving it on your local network"**.
+
 ---
 
 ## 4. Why everything is stdlib-only now (important)
@@ -86,6 +93,19 @@ Response:
 - **Don't re-enable local models** without signing the DLLs or disabling SAC (Asif's call).
 
 MSVC quirk: the venv's `sitecustomize.py` registers `_runtime_dlls` (from pip `msvc-runtime`) because the PC lacks VC++ redistributable. **Don't delete it.**
+
+### 4a. Translation services (free, online, key-less)
+Single choke point: `summarize.translate(text)` in `summarize.py` — used by both `web_build.py` (daily) and on-demand article translation.
+
+| # | Endpoint | Query shape | Notes |
+|---|---|---|---|
+| 1 | Google gtx | `translate.googleapis.com/translate_a/single?client=gtx&sl=de&tl=en&dt=t` | best quality; 429s first under load |
+| 2 | Google dict-chrome-ex | `clients5.google.com/translate_a/t?client=dict-chrome-ex` | different frontend; often survives gtx 429 |
+| 3 | MyMemory | `api.mymemory.translated.net/get?q=…&langpair=de|en` | anonymous quota; ~500 chars/request |
+
+Behaviour: input split into **~450-char chunks** on paragraph/sentence boundaries → translated per chunk → rejoined; **0.25 s** pause between calls; success memoized (`web/data/cache.json` for short text, `web/data/translations/` for full articles) so nothing is translated twice; a chunk that fails all three keeps its **German** text rather than dropping content. No keys, no accounts, no cost — and no guarantee: endpoints are unofficial and can rate-limit (429).
+
+**Upgrade path:** swap the body of `translate()` for a keyed provider (DeepL / Google Cloud Translate) — callers are unaffected. Full user-facing write-up: README → "Translation: the free online services".
 
 ---
 
