@@ -29,18 +29,27 @@ Zero API costs. Fully offline after first setup.
 | `detailed` (default) | 3-5 sentences | Paragraph |
 | `bullet` | Key points | Bullet list |
 
-## Quick Start (Standalone)
+## Quick Start (Generic)
 
-```bash
-git clone https://github.com/asifnady/germany-news-agent.git
-cd germany-news-agent
-pip install -r requirements.txt
-python germany_news.py
-# Or for full per-source breakdown:
-python germany_news.py --detailed
-```
-
-First run auto-downloads the German→English translation model (~50 MB). Subsequent runs are fully offline.
+1. Clone this repository:
+   ```bash
+   git clone https://github.com/your-username/germany-news-agent.git
+   cd germany-news-agent
+   ```
+2. Install requirements:
+   ```bash
+   pip install -r requirements.txt
+   ```
+3. Configure your region:
+   Edit `config.json` to set your RSS feeds, location keywords, and preferences.
+4. Run the web reader:
+   ```bash
+   # Start the translation & build service
+   python web_build.py
+   # Start the local web server
+   node web/server.js
+   ```
+   Open `http://localhost:8090` in your browser.
 
 ### On-Demand Summarization
 
