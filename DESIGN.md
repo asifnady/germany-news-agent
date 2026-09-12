@@ -108,6 +108,19 @@ Behaviour: input split into **~450-char chunks** on paragraph/sentence boundarie
 
 **Upgrade path:** swap the body of `translate()` for a keyed provider (DeepL / Google Cloud Translate) — callers are unaffected. Full user-facing write-up: README → "Translation: the free online services".
 
+### 4b. Offline fallback tier (ONNX Runtime)
+`offline_translate.py` + `tools/fetch_offline_model.py`. Model: Transformers.js export of Helsinki-NLP/opus-mt-de-en, int8 quantized (~106 MB: 49 MB encoder, 56 MB decoder, 5.5 MB tokenizer) in `models/opus-mt-de-en/` — **gitignored**, fetched by script.
+
+Deps `numpy` + `onnxruntime` + `tokenizers` are optional; the pipeline runs without them and `_offline_available()` reports why the engine is missing. Order of tiers in `summarize.translate()`:
+
+1. online chain (best quality)
+2. offline ONNX engine — used immediately once `ONLINE_TRIP = 3` consecutive online failures are seen (circuit breaker, avoids grinding through timeouts)
+3. the German chunk itself (never drop content)
+
+Known workaround: the public exports ship `precompiled_charsmap: null`, which the Rust tokenizer rejects outright — we drop the normalizer and approximate it with NFKC in `_norm()`.
+
+Measured on the i3-8100: **0.6–2.3 s/sentence**, greedy decode. **Beam search was benchmarked and rejected** — identical output on simple sentences, marginal gains on hard ones, ~56 s/sentence (non-merged decoder re-runs the full prefix per step). Don't re-add beam without a KV-cache decode path.
+
 ---
 
 ## 5. File map
@@ -118,6 +131,9 @@ germany-news-agent/
 ├── germany_news.py          # fetch + filter + rank + Discord text + mapping core
 ├── web_build.py             # daily build → web/data/*.json (+ persistent EN cache)
 ├── summarize.py             # on-demand: stdlib scrape + online translate + summary
+├── offline_translate.py     # offline DE→EN via onnxruntime (fallback tier)
+├── tools/fetch_offline_model.py      # ~106 MB model download (gitignored target)
+├── tools/test_offline_fallback.py    # forces online down, asserts English
 ├── setup.py                 # interactive onboarding wizard (stdlib only)
 ├── last_news_articles.json  # number → article map for @Tipu <number> (mode: "web")
 ├── web/

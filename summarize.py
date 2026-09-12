@@ -7,8 +7,14 @@ Usage:
 Pipeline (stdlib only — no trafilatura/lxml/torch/BART, which Windows Smart
 App Control blocks on this machine since 2026-08):
     1. urllib + html.parser — scrape article text from URL
-    2. online translation  — German → English (Google gtx → MyMemory fallback)
+    2. online translation  — German → English (Google gtx → dict-chrome-ex → MyMemory)
     3. extractive summary  — lead + word-frequency sentence scoring
+
+Translation has an optional third tier: when every online endpoint fails (429),
+it falls back to the local ONNX engine in offline_translate.py (same Marian
+family Argos used, executed by the SAC-compatible onnxruntime). After 3
+consecutive online failures the run switches to offline-first for the rest of
+the process, so a rate-limited run does not crawl through timeouts.
 
 Rebuilt 2026-08-31: old pipeline (trafilatura scrape, Argos offline NMT,
 DistilBART) is dead because SAC blocks lxml.etree and torch shm.dll.
@@ -107,6 +113,41 @@ def scrape_article(url):
 
 _translate_cache = {}
 
+# --- optional offline tier (see offline_translate.py) ---------------------
+_offline_state = {"checked": False, "ok": False}
+ONLINE_TRIP = 3          # consecutive online failures before going offline-first
+_online_fail_streak = 0
+
+
+def _offline_available():
+    if not _offline_state["checked"]:
+        _offline_state["checked"] = True
+        try:
+            import offline_translate as off
+            _offline_state["ok"] = off.available()
+            print(f"  [translate] offline ONNX engine: "
+                  f"{'ready' if _offline_state['ok'] else off._state.get('why')}",
+                  file=sys.stderr)
+        except Exception as e:
+            _offline_state["ok"] = False
+            print(f"  [translate] offline engine unavailable: {e}", file=sys.stderr)
+    return _offline_state["ok"]
+
+
+def _offline_translate(text):
+    """Last-resort local translation. Returns None if the engine can't help."""
+    if not _offline_available():
+        return None
+    try:
+        import offline_translate as off
+        out = off.translate(text)
+        if out:
+            print("  [translate] used offline ONNX fallback", file=sys.stderr)
+            return out
+    except Exception as e:
+        print(f"  [translate] offline fallback failed: {e}", file=sys.stderr)
+    return None
+
 
 def _online_translate(text):
     """Translate via free online APIs; returns translated text or None."""
@@ -172,22 +213,39 @@ def _chunks(text, size=450):
 
 
 def translate(text):
+    """DE→EN. Online chain first; local ONNX engine once the online tier trips."""
+    global _online_fail_streak
     if not text or not text.strip():
         return ""
+    offline_first = _online_fail_streak >= ONLINE_TRIP and _offline_available()
+    if offline_first:
+        print("  [translate] online tier tripped — trying offline engine first",
+              file=sys.stderr)
     out_parts = []
     for c in _chunks(text):
         key = c.strip()
         if key in _translate_cache:
             out_parts.append(_translate_cache[key])
             continue
-        t = _online_translate(c)
+        t = _offline_translate(c) if offline_first else None
+        used_online = False
+        if t is None:
+            t = _online_translate(c)
+            if t is None:
+                _online_fail_streak += 1
+            else:
+                _online_fail_streak = 0
+                used_online = True
+        if t is None:
+            t = _offline_translate(c)
         if t is None:
             t = c  # keep the German chunk rather than lose content
-            print("  [translate] kept German chunk (online translation failed)",
+            print("  [translate] kept German chunk (all engines failed)",
                   file=sys.stderr)
         else:
             _translate_cache[key] = t
-            time.sleep(0.25)  # be polite to the free endpoints
+            if used_online:
+                time.sleep(0.25)  # be polite to the free endpoints
         out_parts.append(t)
     return "\n\n".join(out_parts)
 

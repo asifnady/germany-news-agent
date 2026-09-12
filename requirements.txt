@@ -8,6 +8,18 @@
 # summarization is extractive. See README.md → "Translation: the free online services".
 #
 # ---------------------------------------------------------------------------
+# OPTIONAL — offline translation fallback (offline_translate.py)
+# Only needed if you want a local DE->EN engine when the free online endpoints
+# rate-limit. Model files (~106 MB) are fetched separately:
+#   python tools/fetch_offline_model.py
+# This is the SAC-safe path: onnxruntime/tokenizers are signed, unlike
+# ctranslate2/torch/sentencepiece.
+# ---------------------------------------------------------------------------
+# numpy
+# onnxruntime
+# tokenizers
+#
+# ---------------------------------------------------------------------------
 # LEGACY (v2 offline stack) — only needed if you want offline translation +
 # DistilBART summarization. Uncomment ONLY on a machine that permits these
 # native DLLs. Windows Smart App Control (Enforcement) blocks them.

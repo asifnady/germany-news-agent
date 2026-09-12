@@ -21,6 +21,7 @@ Fetches German news from RSS feeds, filters it by *your* location tiers, transla
 - **Python 3.9+** — the pipeline is **pure standard library**, so there is nothing to `pip install`
 - **Node.js 18+** — the web server is zero-dependency (no `npm install`)
 - Internet access — RSS feeds and translation both happen online
+- *(Optional)* `numpy`, `onnxruntime`, `tokenizers` + the ~106 MB model — only if you want the offline translation fallback
 
 ---
 
@@ -102,6 +103,21 @@ How it behaves:
 - **Rate limits** — `HTTP 429` from any endpoint is normal under heavy use. The chain immediately falls through to the next one. If all three fail, the **German text is kept** rather than dropping content.
 - **Want a guaranteed provider?** `translate()` in `summarize.py` is the single choke point used by both the daily build and on-demand translation — swap in a keyed API (DeepL, Google Cloud Translate) there and nothing else changes.
 
+### Third tier: the offline engine
+
+When all three endpoints fail, translation falls back to a **local ONNX model** (`offline_translate.py`) — the same Marian/Opus-MT family Argos used, executed by `onnxruntime` instead of CTranslate2. This exists because some hosts (Windows with Smart App Control in Enforcement mode) block the unsigned native DLLs behind `ctranslate2` / `torch` / `sentencepiece`; `onnxruntime` and `tokenizers` are signed and load fine.
+
+```bash
+python tools/fetch_offline_model.py        # ~106 MB into models/opus-mt-de-en/ (not in git)
+pip install numpy onnxruntime tokenizers   # optional — the pipeline runs without them
+```
+
+Behaviour: after **3 consecutive online failures** the run switches to offline-first, so a rate-limited build doesn't crawl through timeouts. Measured on an i3-8100: **0.6–2.3 s per sentence**, no network, no API key. Quality is excellent on headlines and straight sentences; on long, clause-heavy articles it is noticeably rougher than the online tier — which is exactly why it's the fallback and not the default.
+
+Verify it end to end: `python tools/test_offline_fallback.py` (forces the online tier down and asserts English comes back).
+
+> Design note: beam search was tried and rejected. It produced identical output on simple sentences and only marginal gains on hard ones, at ~56 s per sentence — the non-merged decoder recomputes the whole prefix each step. Greedy is the right trade-off here.
+
 ---
 
 ## Customize it for your region
@@ -172,6 +188,11 @@ germany-news-agent/
 ├── germany_news.py          # fetch + filter + rank core, Discord/terminal output
 ├── web_build.py             # daily build → web/data/*.json (+ translation cache)
 ├── summarize.py             # scrape + translate + summarize one article (stdlib)
+├── offline_translate.py     # offline DE→EN engine (onnxruntime) — last-resort fallback
+├── tools/
+│   ├── fetch_offline_model.py    # downloads the ~106 MB ONNX model
+│   └── test_offline_fallback.py  # proves the fallback engages
+├── models/                  # model files (gitignored, fetched on demand)
 ├── web/
 │   ├── server.js            # zero-dep Node server — page + API on :8090
 │   ├── public/index.html    # the reader UI

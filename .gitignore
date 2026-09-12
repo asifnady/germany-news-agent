@@ -7,3 +7,4 @@ web/data/
 web/*.log
 .venv/
 config.json.bak
+models/
