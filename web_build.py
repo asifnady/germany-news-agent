@@ -87,7 +87,7 @@ def tr(text):
     return out or text
 
 
-def build():
+def _build():
     load_cache()
     all_a = []
     for name, url in gn.FEEDS.items():
@@ -151,6 +151,35 @@ def build():
     save_cache()
     print(f"  OK {date}: {flat} articles, {len(sections_out)} sections → web/data/news/{date}.json",
           file=sys.stderr)
+
+
+LOG_PATH = ROOT / "build_last.log"
+
+
+def build():
+    """Run the build with all progress/error detail kept in build_last.log.
+
+    stdout gets one clean result line only, so the 07:00 scheduler (and any
+    caller) can judge success without parsing translation noise — Google gtx
+    rate-limits log a 429 per chunk, which is expected and harmless.
+    """
+    log_file = open(LOG_PATH, "w", encoding="utf-8", errors="replace")
+    real_stderr = sys.stderr
+    sys.stderr = log_file
+    try:
+        _build()
+    except BaseException as e:
+        sys.stderr = real_stderr
+        log_file.close()
+        print(f"ERROR: build failed: {e}  (full log: {LOG_PATH})")
+        raise
+    sys.stderr = real_stderr
+    log_file.close()
+    lines = [l.strip() for l in
+             LOG_PATH.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()]
+    last = lines[-1] if lines else ""
+    print(last if last.startswith("OK") else f"OK: build finished (see {LOG_PATH})")
+    print(f"full log: {LOG_PATH}")
 
 
 if __name__ == "__main__":

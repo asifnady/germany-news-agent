@@ -118,6 +118,18 @@ _offline_state = {"checked": False, "ok": False}
 ONLINE_TRIP = 3          # consecutive online failures before going offline-first
 _online_fail_streak = 0
 
+# Endpoints that hard-failed once are skipped for the rest of this run. Google
+# gtx rate-limits this IP for long stretches (HTTP 429); retrying it per chunk
+# only floods the build log and, worse, makes the daily job look like a failure.
+_endpoint_down = {}
+
+
+def _endpoint_failed(name, err):
+    if name not in _endpoint_down:
+        _endpoint_down[name] = str(err)
+        print(f"  [translate] {name} unavailable ({err}) — skipped for the rest of this run",
+              file=sys.stderr)
+
 
 def _offline_available():
     if not _offline_state["checked"]:
@@ -153,38 +165,41 @@ def _online_translate(text):
     """Translate via free online APIs; returns translated text or None."""
     q = urllib.parse.quote(text)
     # 1) Google gtx (no key)
-    try:
-        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=de&tl=en&dt=t&q={q}"
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=20) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        out = "".join(seg[0] for seg in data[0] if seg and seg[0])
-        if out:
-            return out
-    except Exception as e:
-        print(f"  [translate error] Google gtx: {e}", file=sys.stderr)
+    if "Google gtx" not in _endpoint_down:
+        try:
+            url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=de&tl=en&dt=t&q={q}"
+            req = urllib.request.Request(url, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, context=_ssl_ctx, timeout=20) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            out = "".join(seg[0] for seg in data[0] if seg and seg[0])
+            if out:
+                return out
+        except Exception as e:
+            _endpoint_failed("Google gtx", e)
     # 1b) Google dict-chrome-ex (different frontend, often not rate-limited)
-    try:
-        url = f"https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=de&tl=en&q={q}"
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=20) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        out = data[0] if isinstance(data, list) and data else None
-        if out:
-            return out
-    except Exception as e:
-        print(f"  [translate error] Google dict-chrome-ex: {e}", file=sys.stderr)
+    if "Google dict-chrome-ex" not in _endpoint_down:
+        try:
+            url = f"https://clients5.google.com/translate_a/t?client=dict-chrome-ex&sl=de&tl=en&q={q}"
+            req = urllib.request.Request(url, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, context=_ssl_ctx, timeout=20) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            out = data[0] if isinstance(data, list) and data else None
+            if out:
+                return out
+        except Exception as e:
+            _endpoint_failed("Google dict-chrome-ex", e)
     # 2) MyMemory (free, no key; ~500 char limit per request)
-    try:
-        url = f"https://api.mymemory.translated.net/get?q={q}&langpair=de|en"
-        req = urllib.request.Request(url, headers={"User-Agent": UA})
-        with urllib.request.urlopen(req, context=_ssl_ctx, timeout=20) as resp:
-            data = json.loads(resp.read().decode("utf-8"))
-        out = (data.get("responseData") or {}).get("translatedText")
-        if out and not out.startswith("MYMEMORY WARNING"):
-            return out
-    except Exception as e:
-        print(f"  [translate error] MyMemory: {e}", file=sys.stderr)
+    if "MyMemory" not in _endpoint_down:
+        try:
+            url = f"https://api.mymemory.translated.net/get?q={q}&langpair=de|en"
+            req = urllib.request.Request(url, headers={"User-Agent": UA})
+            with urllib.request.urlopen(req, context=_ssl_ctx, timeout=20) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+            out = (data.get("responseData") or {}).get("translatedText")
+            if out and not out.startswith("MYMEMORY WARNING"):
+                return out
+        except Exception as e:
+            _endpoint_failed("MyMemory", e)
     return None
 
 

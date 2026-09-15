@@ -8,3 +8,4 @@ web/*.log
 .venv/
 config.json.bak
 models/
+build_last.log

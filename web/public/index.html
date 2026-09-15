@@ -96,7 +96,6 @@
   <header>
     <div class="top">
       <h1>Germany News<span class="src">DE→EN</span></h1>
-      <button id="refresh" title="Refresh">⟳</button>
     </div>
     <div class="nav">
       <button id="prev" title="Previous day">‹</button>
@@ -180,7 +179,6 @@ function fmtDateLabel(date) {
 
 // --- init / date navigation ------------------------------------------
 async function init() {
-  $("refresh").onclick = () => loadDate(state.date, true);
   $("prev").onclick = () => step(-1);
   $("next").onclick = () => step(1);
   $("latest").onclick = () => { if (state.days.length) selectDate(state.days[0]); };
